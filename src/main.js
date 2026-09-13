@@ -50,9 +50,9 @@ function readBoard(key, fallback = []) {
   return data;
 }
 const initial = () => [
-  createTimer({ title: '집중할 시간', duration: 25 * 60_000, position: 0 }),
-  createTimer({ title: '잠깐 쉬어가기', duration: 5 * 60_000, position: 1 }),
-  createTimer({ title: '자유롭게 기록', mode: 'stopwatch', position: 2 }),
+  createTimer({ title: '25분 타이머', duration: 25 * 60_000, position: 0 }),
+  createTimer({ title: '5분 타이머', duration: 5 * 60_000, position: 1 }),
+  createTimer({ title: '스톱워치', mode: 'stopwatch', position: 2 }),
 ];
 let timers = readBoard(GUEST_KEY, initial());
 let prefs = { sound: false, notifications: false, ...read('tempo.preferences', {}) };
@@ -69,29 +69,26 @@ const clockNow = () => Date.now() + clockOffset;
 const labels = { idle: '준비', running: '진행 중', paused: '일시정지', completed: '완료' };
 
 $('#app').innerHTML = `
-  <header class="topbar"><a class="brand" href="${BASE}" aria-label="tempo 홈"><span class="brand-mark"><i></i><i></i><i></i></span>tempo<span class="brand-dot">.</span></a>
-    <div class="top-actions"><button class="icon-button cloud-status" id="cloud-button" aria-label="기기 간 연동 안 됨" title="기기 간 연동 안 됨">${icon('cloudOff')}</button><span class="top-divider"></span><button class="icon-button" id="preferences-button" aria-label="앱 설정">${icon('sliders')}</button><button class="login-button" id="login-button"><span class="google-g">G</span><span id="login-label">Google로 연결</span></button></div>
+  <header class="topbar"><a class="brand" href="${BASE}" aria-label="minimal timer 홈">minimal timer</a>
+    <div class="top-actions"><button class="icon-button cloud-status" id="cloud-button" aria-label="기기 간 연동 안 됨" title="기기 간 연동 안 됨">${icon('cloudOff')}</button><span class="top-divider"></span><button class="icon-button" id="preferences-button" aria-label="앱 설정">${icon('sliders')}</button><button class="login-button" id="login-button"><span class="google-g">G</span><span id="login-label">Google 로그인</span></button></div>
   </header>
-  <main><section class="intro"><div><div class="eyebrow"><span></span> MAKE TIME, YOUR WAY</div><h1>나만의 속도로.</h1><p>하나에 집중해도, 여러 일을 동시에 해도.</p></div><div class="intro-note"><span class="note-mark">↗</span><span>시간은 흐르고,<br>당신은 당신의 페이스로.</span></div></section>
-    <section class="workspace" aria-label="나의 타이머"><div class="workspace-toolbar"><div class="workspace-title"><h2>나의 타이머 <span id="total-count">0</span></h2><span class="running-count" id="running-count"></span></div><button class="primary-button" id="add-button">${icon('plus')}<span>새 타이머</span></button></div>
+  <main><section class="workspace" aria-label="타이머"><div class="workspace-toolbar"><div class="workspace-title"><h1>타이머 <span id="total-count">0</span></h1><span class="running-count" id="running-count"></span></div></div>
       <div class="timer-grid" id="timer-grid"></div>
-      <div class="board-footnote"><span>${icon('play')} 블록을 눌러 시작 · 일시정지</span><span>${icon('grip')} 끌어서 순서 변경</span></div>
     </section>
-    <footer class="footer"><span>조금 더 가볍게, 조금 더 집중해서.</span><span>LESS FRICTION. MORE FLOW.</span></footer>
   </main>
-  <dialog id="timer-dialog"><form id="timer-form"><div class="dialog-heading"><div><span class="eyebrow">YOUR OWN TEMPO</span><h2 id="dialog-title">새 타이머</h2></div><button class="icon-button" type="button" data-close="timer-dialog" aria-label="닫기">${icon('close')}</button></div>
-    <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="어떤 시간을 보낼까요?" required autocomplete="off" />
+  <dialog id="timer-dialog"><form id="timer-form"><div class="dialog-heading"><h2 id="dialog-title">새 타이머</h2><button class="icon-button" type="button" data-close="timer-dialog" aria-label="닫기">${icon('close')}</button></div>
+    <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="타이머 이름" required autocomplete="off" />
     <fieldset class="mode-picker"><legend class="field-label">모드</legend><label><input type="radio" name="mode" value="timer" checked><span>${icon('timer')} 타이머</span></label><label><input type="radio" name="mode" value="stopwatch"><span>${icon('watch')} 스톱워치</span></label></fieldset>
     <div id="duration-fields"><span class="field-label">설정 시간</span><div class="duration-inputs"><label><input name="hours" type="number" min="0" max="168" value="0" inputmode="numeric" required><span>시간</span></label><b>:</b><label><input name="minutes" type="number" min="0" max="59" value="25" inputmode="numeric" required><span>분</span></label><b>:</b><label><input name="seconds" type="number" min="0" max="59" value="0" inputmode="numeric" required><span>초</span></label></div></div>
     <p class="field-note" id="mode-note">설정한 시간부터 거꾸로 셉니다.</p><p class="form-error" id="form-error" role="alert"></p>
     <div class="dialog-tools" id="edit-tools"><button type="button" class="text-button" id="duplicate-button">${icon('copy')} 복제</button><button type="button" class="text-button" id="move-first-button">${icon('arrow')} 맨 앞으로</button><button type="button" class="text-button danger" id="delete-button">${icon('trash')} 삭제</button></div>
     <button class="primary-button full-width" type="submit" id="save-button">만들기 ${icon('plus')}</button></form></dialog>
-  <dialog id="preferences-dialog"><div class="dialog-heading"><div><span class="eyebrow">JUST THE WAY YOU LIKE</span><h2>내 기기 설정</h2></div><button class="icon-button" data-close="preferences-dialog" aria-label="닫기">${icon('close')}</button></div>
+  <dialog id="preferences-dialog"><div class="dialog-heading"><h2>설정</h2><button class="icon-button" data-close="preferences-dialog" aria-label="닫기">${icon('close')}</button></div>
     <div class="preference-row"><div>${icon('bell')}<span><strong>완료 알림</strong><small>이 기기에서 알림 받기</small></span></div><label class="switch"><input id="notification-toggle" type="checkbox" aria-label="완료 알림"><span></span></label></div>
     <div class="preference-row"><div>${icon('sound')}<span><strong>알림 소리</strong><small>앱이 열려 있을 때 짧은 소리</small></span></div><label class="switch"><input id="sound-toggle" type="checkbox" aria-label="알림 소리"><span></span></label></div>
     <p class="field-note">앱을 닫았을 때 알림 소리는 기기의 알림 설정을 따릅니다.</p><button class="text-button" id="test-notification">${icon('bell')} 알림 테스트</button>
-    <div class="settings-account"><span id="account-description">로그인 없이도 이 브라우저에 저장돼요.</span><button class="text-button" id="account-action">Google로 연결 ${icon('cloud')}</button></div>
-    <button class="secondary-button full-width" id="install-button">${icon('download')} 앱으로 설치하기</button><p class="field-note" id="install-note">설치하면 홈 화면에서 바로 열 수 있어요.</p></dialog>
+    <div class="settings-account"><span id="account-description">이 브라우저에 저장 중</span><button class="text-button" id="account-action">Google 로그인 ${icon('cloud')}</button></div>
+    <button class="secondary-button full-width" id="install-button">${icon('download')} 앱 설치</button><p class="field-note" id="install-note"></p></dialog>
   <dialog id="delete-dialog"><div class="dialog-heading"><h2>타이머를 삭제할까요?</h2><button class="icon-button" data-close="delete-dialog" aria-label="닫기">${icon('close')}</button></div><p id="delete-description"></p><div class="confirm-actions"><button class="secondary-button" data-close="delete-dialog">취소</button><button class="primary-button danger-fill" id="confirm-delete">삭제하기</button></div></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`;
 
@@ -128,14 +125,14 @@ function card(timer) {
   const state = status(timer, clockNow());
   return `<article class="timer-card ${state}" data-id="${timer.id}" aria-label="${escape(timer.title)}"><div class="card-heading"><span class="card-kind">${icon(timer.mode === 'timer' ? 'timer' : 'watch')} ${timer.mode === 'timer' ? 'TIMER' : 'STOPWATCH'}</span><button class="drag-handle icon-button" data-action="drag" aria-label="${escape(timer.title)} 순서 이동. 방향키로 변경" title="끌어서 순서 변경">${icon('grip')}</button></div>
     <h3>${escape(timer.title)}</h3><button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span><span class="clock-hint"><span class="state-icon">${icon(state === 'running' ? 'pause' : state === 'completed' ? 'check' : 'play')}</span><span class="state-label">${labels[state]}</span></span></button>
-    <div class="progress-track" aria-hidden="true"><div class="progress-fill"></div></div><div class="card-bottom"><span class="duration-caption">${timer.mode === 'timer' ? `설정 ${formatTime(timer.duration)}` : '흐르는 시간을 기록해요'}</span><div class="card-controls"><button class="minute-button" data-action="extend" aria-label="${escape(timer.title)} 1분 추가" ${state !== 'running' || timer.mode !== 'timer' ? 'hidden' : ''}>+1분</button><button class="icon-button" data-action="reset" aria-label="${escape(timer.title)} 새로고침" title="설정 시간으로 초기화">${icon('reset')}</button><button class="icon-button" data-action="settings" aria-label="${escape(timer.title)} 설정" title="설정">${icon('sliders')}</button></div></div></article>`;
+    <div class="progress-track" aria-hidden="true"><div class="progress-fill"></div></div><div class="card-bottom"><span class="duration-caption">${timer.mode === 'timer' ? `설정 ${formatTime(timer.duration)}` : '경과 시간'}</span><div class="card-controls"><button class="minute-button" data-action="extend" aria-label="${escape(timer.title)} 1분 추가" ${state !== 'running' || timer.mode !== 'timer' ? 'hidden' : ''}>+1분</button><button class="icon-button" data-action="reset" aria-label="${escape(timer.title)} 새로고침" title="초기화">${icon('reset')}</button><button class="icon-button" data-action="settings" aria-label="${escape(timer.title)} 설정" title="설정">${icon('sliders')}</button></div></div></article>`;
 }
 
 function render() {
   const focus = document.activeElement;
   const focusId = focus?.closest('[data-id]')?.dataset.id;
   const focusAction = focus?.dataset.action;
-  $('#timer-grid').innerHTML = ordered().map(card).join('') + `<button class="add-card" id="add-card"><span class="add-card-icon">${icon('plus')}</span><strong>${timers.length ? '나만의 시간 더하기' : '첫 타이머를 만들어보세요'}</strong><span>타이머 또는 스톱워치</span></button>`;
+  $('#timer-grid').innerHTML = ordered().map(card).join('') + `<button class="add-card" id="add-card" aria-label="타이머 추가"><span class="add-card-icon">${icon('plus')}</span><strong>추가</strong></button>`;
   $('#total-count').textContent = timers.length;
   if (focusId && focusAction) $(`[data-id="${focusId}"] [data-action="${focusAction}"]`)?.focus({ preventScroll: true });
   updateClocks(); updateConnection();
@@ -149,9 +146,9 @@ function updateConnection() {
   $('#cloud-button').title = title;
   $('#cloud-button').setAttribute('aria-label', title);
   $('#cloud-button').classList.toggle('linked', !!healthy);
-  $('#login-label').textContent = linked ? '내 계정' : 'Google로 연결';
-  $('#account-description').textContent = linked ? user.email : '로그인 없이도 이 브라우저에 저장돼요.';
-  $('#account-action').innerHTML = linked ? '로그아웃' : `Google로 연결 ${icon('cloud')}`;
+  $('#login-label').textContent = linked ? '내 계정' : 'Google 로그인';
+  $('#account-description').textContent = linked ? user.email : '이 브라우저에 저장 중';
+  $('#account-action').innerHTML = linked ? '로그아웃' : `Google 로그인 ${icon('cloud')}`;
 }
 
 async function notify(timer) {
@@ -190,8 +187,8 @@ function updateClocks() {
       notify(timer).catch(() => toast('알림을 표시하지 못했어요. 기기 설정을 확인해주세요.', true));
     }
   }
-  $('#running-count').innerHTML = running ? `<span class="live-dot"></span>${running}개 진행 중` : '서두르지 않아도 괜찮아요';
-  document.title = running ? `${running}개 진행 중 · tempo` : 'tempo — 나만의 속도로';
+  $('#running-count').innerHTML = running ? `<span class="live-dot"></span>${running}개 진행 중` : '';
+  document.title = running ? `${running}개 진행 중 · minimal timer` : 'minimal timer';
 }
 
 async function refreshCloud() {
@@ -271,7 +268,7 @@ $('#timer-form').addEventListener('submit', event => {
     const duration = mode === 'stopwatch' ? (original?.duration || 25 * 60_000) : (Number(form.elements.hours.value) * 3600 + Number(form.elements.minutes.value) * 60 + Number(form.elements.seconds.value)) * 1000;
     const fields = { title: form.elements.title.value, mode, duration };
     const next = original ? transition(original, 'edit', fields) : createTimer({ ...fields, position: nextPosition() });
-    if (commit(next, original)) { $('#timer-dialog').close(); toast(original ? '설정을 저장했어요.' : '새로운 시간이 준비됐어요.'); }
+    if (commit(next, original)) { $('#timer-dialog').close(); toast(original ? '저장됨' : '추가됨'); }
   } catch (error) { $('#form-error').textContent = error.message; }
 });
 
@@ -289,7 +286,6 @@ $('#timer-grid').addEventListener('click', event => {
   if (next !== timer) commit(next, timer);
   if (action === 'reset') navigator.serviceWorker?.getRegistration().then(async reg => { for (const note of await reg?.getNotifications() || []) if (note.tag === `${timer.id}:${timer.runId}`) note.close(); });
 });
-$('#add-button').onclick = () => openEditor();
 $('#duplicate-button').onclick = () => { const original = timers.find(t => t.id === editingId); if (original && commit(duplicate(original, nextPosition()))) { $('#timer-dialog').close(); toast('대기 상태로 복제했어요.'); } };
 $('#move-first-button').onclick = () => { const original = timers.find(t => t.id === editingId); if (original && commit(transition(original, 'position', { position: Math.min(...timers.map(t => t.position)) - 1 }), original)) $('#timer-dialog').close(); };
 $('#delete-button').onclick = () => { const timer = timers.find(t => t.id === editingId); if (!timer) return; $('#delete-description').textContent = `‘${timer.title}’ 블록과 진행 중인 시간이 삭제돼요.`; $('#delete-dialog').showModal(); };
@@ -358,7 +354,7 @@ $('#test-notification').onclick = async () => {
   sound();
   if (!prefs.notifications || !('Notification' in window) || Notification.permission !== 'granted') return toast('먼저 완료 알림을 켜주세요.');
   const reg = await navigator.serviceWorker.ready;
-  await reg.showNotification('tempo · 알림이 준비됐어요', { body: '시간이 다 되면 이렇게 알려드릴게요.', tag: 'tempo-test', icon: `${BASE}icon-192.png`, silent: !prefs.sound });
+  await reg.showNotification('minimal timer', { body: '알림 테스트', tag: 'tempo-test', icon: `${BASE}icon-192.png`, silent: !prefs.sound });
 };
 
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); deferredInstall = event; });
@@ -380,11 +376,13 @@ $('#timer-grid').addEventListener('pointermove', event => {
   if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 8) drag.moved = true;
   if (!drag.moved) return;
   $(`[data-id="${drag.id}"]`)?.classList.add('dragging');
-  document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+  document.querySelectorAll('.drop-before,.drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+  drag.target = null;
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.timer-card');
   if (target && target.dataset.id !== drag.id) {
-    target.classList.add('drop-target'); drag.target = target.dataset.id;
-    const box = target.getBoundingClientRect(); drag.after = event.clientY > box.top + box.height / 2;
+    const source = $(`[data-id="${drag.id}"]`), box = target.getBoundingClientRect();
+    drag.after = Math.abs(target.offsetTop - source.offsetTop) < 10 ? event.clientX > box.left + box.width / 2 : event.clientY > box.top + box.height / 2;
+    target.classList.add(drag.after ? 'drop-after' : 'drop-before'); drag.target = target.dataset.id;
   }
 });
 function finishDrag(cancel = false) {
@@ -398,7 +396,7 @@ function finishDrag(cancel = false) {
     const timer = timers.find(t => t.id === drag.id);
     commit(transition(timer, 'position', { position: (before + after) / 2 }), timer);
   }
-  document.querySelectorAll('.dragging,.drop-target').forEach(el => el.classList.remove('dragging', 'drop-target'));
+  document.querySelectorAll('.dragging,.drop-before,.drop-after').forEach(el => el.classList.remove('dragging', 'drop-before', 'drop-after'));
   setTimeout(() => { drag = null; }, 0);
 }
 $('#timer-grid').addEventListener('pointerup', () => finishDrag());

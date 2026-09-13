@@ -1,4 +1,4 @@
-# tempo
+# minimal timer
 
 가볍고 빠른 병렬 타이머 · 스톱워치.
 

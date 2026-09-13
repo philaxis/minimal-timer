@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "tempo — 나만의 속도로",
-  "short_name": "tempo",
-  "description": "가볍고 빠른 병렬 타이머와 스톱워치",
+  "name": "minimal timer",
+  "short_name": "minimal timer",
+  "description": "여러 타이머와 스톱워치를 동시에 사용하는 웹앱",
   "lang": "ko",
   "start_url": "./",
   "scope": "./",
