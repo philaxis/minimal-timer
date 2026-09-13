@@ -67,6 +67,7 @@ const notified = new Set(read('tempo.notified', []));
 let clockOffset = Number(read('tempo.clockOffset', 0)) || 0;
 const clockNow = () => Date.now() + clockOffset;
 const labels = { idle: '준비', running: '진행 중', paused: '일시정지', completed: '완료' };
+const authCallbackPopup = !!window.opener && new URLSearchParams(location.search).has('code');
 
 $('#app').innerHTML = `
   <header class="topbar"><a class="brand" href="${BASE}" aria-label="minimal timer 홈">minimal timer</a>
@@ -314,13 +315,17 @@ $('#account-action').onclick = async () => {
 
 async function login() {
   if (!client) return toast('Google 연결을 준비 중이에요. 지금은 로그인 없이 사용할 수 있어요.');
+  const popup = window.open('', 'minimal-timer-google-login', 'popup,width=500,height=650');
+  if (!popup) return toast('팝업을 허용해주세요.', true);
   try {
     await queue;
-    if (!write('tempo.import', timers.map(t => ({ ...t, id: crypto.randomUUID(), revision: 0, runId: crypto.randomUUID() })))) return;
+    if (!write('tempo.import', timers.map(t => ({ ...t, id: crypto.randomUUID(), revision: 0, runId: crypto.randomUUID() })))) { popup.close(); return; }
     if (user?.is_anonymous) await removePush();
-    const { error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + BASE } });
+    const { data, error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + BASE, skipBrowserRedirect: true } });
     if (error) throw error;
-  } catch (error) { toast(error.message, true); }
+    if (!data.url) throw new Error('로그인 주소를 열 수 없습니다.');
+    popup.location.href = data.url;
+  } catch (error) { popup.close(); toast(error.message, true); }
 }
 
 $('#sound-toggle').onchange = async event => {
@@ -472,8 +477,22 @@ if (storageError) toast('저장 데이터를 읽지 못했어요. 브라우저 �
 setInterval(updateClocks, 100);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`${BASE}sw.js`).catch(() => toast('앱 설치 기능을 준비하지 못했어요.', true));
 if (client) {
-  client.auth.onAuthStateChange((_event, session) => { setTimeout(() => setSession(session), 0); });
+  client.auth.onAuthStateChange((_event, session) => {
+    if (authCallbackPopup && session) {
+      window.opener?.postMessage({ type: 'minimal-timer-auth' }, location.origin);
+      window.close();
+      return;
+    }
+    setTimeout(() => setSession(session), 0);
+  });
   client.auth.getSession().then(({ data, error }) => { if (error) throw error; return setSession(data.session); }).catch(error => toast(error.message, true));
 }
+window.addEventListener('message', event => {
+  if (event.origin !== location.origin || !client) return;
+  if (event.data?.type === 'minimal-timer-auth-error') return toast(event.data.message || '로그인하지 못했습니다.', true);
+  if (event.data?.type !== 'minimal-timer-auth') return;
+  client.auth.getSession().then(({ data, error }) => { if (error) throw error; return setSession(data.session); }).then(() => toast('로그인됨')).catch(error => toast(error.message, true));
+});
 const authError = new URLSearchParams(location.hash.slice(1)).get('error_description') || new URLSearchParams(location.search).get('error_description');
-if (authError) { toast(`Google 연결: ${authError}`, true); history.replaceState(null, '', BASE); }
+if (authError && window.opener) { window.opener.postMessage({ type: 'minimal-timer-auth-error', message: authError }, location.origin); window.close(); }
+else if (authError) { toast(`Google 연결: ${authError}`, true); history.replaceState(null, '', BASE); }
