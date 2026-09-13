@@ -1,6 +1,6 @@
 import './style.css';
 import { createTimer, transition, duplicate, value, status, formatTime, normalizeTimer, sessionRecord } from './model.js';
-import { dayKey, mergeSessions, normalizeTag, replaceTagPrefix, splitByDay, tagMatches, tagPrefixes, timelineLayout, unionDuration, validSession, validTimezone } from './history.js';
+import { dayKey, fuzzyTagMatch, mergeSessions, normalizeTag, replaceTagPrefix, splitByDay, tagMatches, tagPrefixes, timelineLayout, unionDuration, validSession, validTimezone } from './history.js';
 import { client, readTimers, saveTimer, watchTimers, registerPush, removePush, readTags, saveTag, archiveTag, mergeTag, readSessions, saveSession, deleteSession, readTimezone, saveTimezone } from './cloud.js';
 
 const icons = {
@@ -75,7 +75,11 @@ function readSessionList(key = GUEST_KEY) {
 let tags = readTagList(), sessions = readSessionList(), sessionQueue = read(sideKey('sessionQueue', GUEST_KEY), []).filter(validSession), timezone = read(sideKey('timezone', GUEST_KEY), deviceTimezone);
 if (!validTimezone(timezone)) timezone = deviceTimezone;
 const savedPrefs = read('tempo.preferences', {});
-let prefs = { sound: false, notifications: false, ...savedPrefs, push: savedPrefs.push ?? savedPrefs.notifications ?? false };
+let prefs = { sound: false, notifications: false, cardSize: 0, sortMode: 'due', ...savedPrefs, push: savedPrefs.push ?? savedPrefs.notifications ?? false };
+prefs.cardSize = Math.max(0, Math.min(2, Number(prefs.cardSize) || 0));
+if (!['due', 'priority', 'manual'].includes(prefs.sortMode)) prefs.sortMode = 'due';
+let selectedTags = [], recentTags = read('tempo.recentTags', []);
+if (!Array.isArray(recentTags)) recentTags = [];
 let user = null, channel = null, cloudReady = false, connected = false, syncing = false;
 let activeKey = GUEST_KEY, editingId = null, editingTag = null, deferredInstall = null, audioContext, alarmTimer, drag = null;
 let view = 'timers', calendarMonth = dayKey(Date.now(), timezone).slice(0, 7), selectedDay = null;
@@ -87,23 +91,22 @@ const failedWrites = new Set();
 const notified = new Set(read('tempo.notified', []));
 let clockOffset = Number(read('tempo.clockOffset', 0)) || 0;
 const clockNow = () => Date.now() + clockOffset;
-const labels = { idle: '준비', running: '진행 중', paused: '일시정지', completed: '완료' };
 const authCallbackPopup = !!window.opener && new URLSearchParams(location.search).has('code');
 
 $('#app').innerHTML = `
   <header class="topbar"><a class="brand" href="${BASE}" aria-label="minimal timer 홈">minimal timer</a>
     <div class="top-actions"><button class="icon-button cloud-status" id="cloud-button" aria-label="기기 간 연동 안 됨" title="기기 간 연동 안 됨">${icon('cloudOff')}</button><span class="top-divider"></span><button class="icon-button" id="preferences-button" aria-label="앱 설정">${icon('sliders')}</button><button class="login-button" id="login-button"><span class="google-g">G</span><span id="login-label">Google 로그인</span></button></div>
   </header>
-  <main><nav class="view-tabs" aria-label="보기"><button id="timers-view" class="active">${icon('list')} 타이머</button><button id="calendar-view">${icon('calendar')} 달력</button></nav><section class="workspace" id="timer-workspace" aria-label="타이머"><div class="workspace-toolbar"><div class="workspace-title"><h1>타이머 <span id="total-count">0</span></h1><span class="running-count" id="running-count"></span></div></div>
+  <main><div class="view-bar"><nav class="view-tabs" aria-label="보기"><button id="timers-view" class="active">${icon('list')} 타이머</button><button id="calendar-view">${icon('calendar')} 달력</button><button id="due-view">${icon('tag')} 마감별</button></nav><div class="view-controls"><select id="timer-sort" aria-label="타이머 정렬"><option value="due">마감일순</option><option value="priority">중요도순</option><option value="manual">직접 정렬</option></select><div class="size-controls" aria-label="블록 크기"><button id="size-down" aria-label="블록 작게">−</button><button id="size-up" aria-label="블록 크게">+</button></div></div></div><section class="workspace" id="timer-workspace" aria-label="타이머">
       <div class="timer-grid" id="timer-grid"></div>
-    </section><section class="calendar-workspace" id="calendar-workspace" aria-label="달력" hidden><div class="calendar-toolbar"><button class="icon-button" id="previous-month" aria-label="이전 달">${icon('left')}</button><h1 id="calendar-title"></h1><button class="icon-button" id="next-month" aria-label="다음 달">${icon('right')}</button><select id="calendar-tag-filter" aria-label="태그 필터"><option value="">모든 태그</option></select><select id="calendar-priority-filter" aria-label="중요도 필터"><option value="">모든 중요도</option><option value="high">높음</option><option value="normal">보통</option><option value="low">낮음</option></select></div><div class="month-grid" id="month-grid"></div></section>
+    </section><section class="calendar-workspace" id="calendar-workspace" aria-label="달력" hidden><div class="calendar-toolbar"><button class="icon-button" id="previous-month" aria-label="이전 달">${icon('left')}</button><h1 id="calendar-title"></h1><button class="icon-button" id="next-month" aria-label="다음 달">${icon('right')}</button><select id="calendar-tag-filter" aria-label="태그 필터"><option value="">모든 태그</option></select><select id="calendar-priority-filter" aria-label="중요도 필터"><option value="">모든 중요도</option><option value="high">높음</option><option value="normal">보통</option><option value="low">낮음</option></select></div><div class="month-grid" id="month-grid"></div></section><section id="due-workspace" aria-label="마감별" hidden><div id="due-groups"></div></section>
   </main>
   <dialog id="timer-dialog"><form id="timer-form"><div class="dialog-heading"><h2 id="dialog-title">새 타이머</h2><button class="icon-button" type="button" data-close="timer-dialog" aria-label="닫기">${icon('close')}</button></div>
     <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="비워두면 자동 지정" autocomplete="off" />
     <fieldset class="mode-picker"><legend class="field-label">모드</legend><label><input type="radio" name="mode" value="timer" checked><span>${icon('timer')} 타이머</span></label><label><input type="radio" name="mode" value="stopwatch"><span>${icon('watch')} 스톱워치</span></label></fieldset>
     <div id="duration-fields"><span class="field-label">설정 시간</span><div class="duration-inputs"><label><input name="hours" type="number" min="0" max="168" value="0" inputmode="numeric" required><span>시간</span></label><b>:</b><label><input name="minutes" type="number" min="0" max="59" value="25" inputmode="numeric" required><span>분</span></label><b>:</b><label><input name="seconds" type="number" min="0" max="59" value="0" inputmode="numeric" required><span>초</span></label></div></div>
     <div class="metadata-fields"><label><span class="field-label">종료일</span><input name="dueDate" type="date"></label><label><span class="field-label">중요도</span><select name="priority"><option value="low">낮음</option><option value="normal" selected>보통</option><option value="high">높음</option></select></label></div>
-    <fieldset class="tag-picker"><legend class="field-label">태그</legend><div id="timer-tag-options"></div></fieldset>
+    <fieldset class="tag-picker"><legend class="field-label">태그</legend><input id="timer-tag-search" type="search" placeholder="태그 검색" autocomplete="off"><div class="selected-tags" id="selected-tags"></div><div class="tag-suggestions" id="timer-tag-options"></div></fieldset>
     <p class="field-note" id="mode-note">설정한 시간부터 거꾸로 셉니다.</p><p class="form-error" id="form-error" role="alert"></p>
     <div class="dialog-tools" id="edit-tools"><button type="button" class="text-button" id="duplicate-button">${icon('copy')} 복제</button><button type="button" class="text-button" id="move-first-button">${icon('arrow')} 맨 앞으로</button><button type="button" class="text-button danger" id="delete-button">${icon('trash')} 삭제</button></div>
     <button class="primary-button full-width" type="submit" id="save-button">만들기 ${icon('plus')}</button></form></dialog>
@@ -134,7 +137,15 @@ function persistWorkspace() {
   persist(); write(sideKey('tags'), tags); write(sideKey('sessions'), sessions); write(sideKey('timezone'), timezone);
 }
 function savePrefs() { write('tempo.preferences', prefs); }
-function ordered() { return [...timers].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)); }
+const priorityRank = { high: 0, normal: 1, low: 2 };
+function ordered(mode = prefs.sortMode) {
+  return [...timers].sort((a, b) => {
+    const position = a.position - b.position || a.id.localeCompare(b.id);
+    const due = (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99');
+    const priority = priorityRank[a.priority] - priorityRank[b.priority];
+    return mode === 'due' ? due || priority || position : mode === 'priority' ? priority || due || position : position;
+  });
+}
 function nextPosition() { return Math.max(-1, ...timers.map(t => t.position)) + 1; }
 function activeTags() { return tags.filter(tag => !tag.archived).sort((a, b) => a.path.localeCompare(b.path, 'ko')); }
 function filterTags() {
@@ -146,6 +157,12 @@ function filterTags() {
   return [...paths].sort((a, b) => a.localeCompare(b, 'ko'));
 }
 function formatMinutes(ms) { return ms < 60_000 ? `${Math.floor(ms / 1000)}초` : `${Math.round(ms / 60_000)}분`; }
+function dueLabel(date) {
+  if (!date) return '';
+  const today = dayKey(Date.now(), timezone), days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  const short = `${Number(date.slice(5, 7))}월 ${Number(date.slice(8))}일`;
+  return `${short} · ${days === 0 ? '오늘' : days > 0 ? `D-${days}` : `D+${-days}`}`;
+}
 function filtered(session) {
   const tag = $('#calendar-tag-filter')?.value, priority = $('#calendar-priority-filter')?.value;
   return (!tag || session.tags.some(path => tagMatches(path, tag))) && (!priority || session.priority === priority);
@@ -243,23 +260,38 @@ function syncAlarm(completed) {
   }
 }
 
-function card(timer) {
+function card(timer, grouped = false) {
   const state = status(timer, clockNow());
-  const metadata = [timer.priority === 'high' ? '<span class="priority-mark">높음</span>' : '', ...(timer.tags || []).slice(0, 2).map(tag => `<span class="card-tag" title="${escape(tag)}">${escape(tag)}</span>`), timer.dueDate ? `<span class="card-due${timer.dueDate < dayKey(Date.now(), timezone) ? ' overdue' : ''}">${escape(timer.dueDate)} 마감</span>` : ''].filter(Boolean).join('');
-  return `<article class="timer-card ${state}" data-id="${timer.id}" aria-label="${escape(timer.title)}"><div class="card-heading"><span class="card-kind">${icon(timer.mode === 'timer' ? 'timer' : 'watch')} ${timer.mode === 'timer' ? 'TIMER' : 'STOPWATCH'}</span><button class="drag-handle icon-button" data-action="drag" aria-label="${escape(timer.title)} 순서 이동. 방향키로 변경" title="끌어서 순서 변경">${icon('grip')}</button></div>
-    <h3>${escape(timer.title)}</h3><div class="card-metadata">${metadata}</div><button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span><span class="clock-hint"><span class="state-icon">${icon(state === 'running' ? 'pause' : state === 'completed' ? 'check' : 'play')}</span><span class="state-label">${labels[state]}</span></span></button>
-    <div class="progress-track" aria-hidden="true"><div class="progress-fill"></div></div><div class="card-bottom"><span class="duration-caption">${timer.mode === 'timer' ? `설정 ${formatTime(timer.duration)}` : '경과 시간'}</span><div class="card-controls"><button class="minute-button" data-action="extend" aria-label="${escape(timer.title)} 1분 추가" ${state !== 'running' || timer.mode !== 'timer' ? 'hidden' : ''}>+1분</button><button class="icon-button" data-action="reset" aria-label="${escape(timer.title)} 새로고침" title="초기화">${icon('reset')}</button><button class="icon-button" data-action="settings" aria-label="${escape(timer.title)} 설정" title="설정">${icon('sliders')}</button></div></div></article>`;
+  const due = timer.dueDate ? `<div class="card-due${timer.dueDate < dayKey(Date.now(), timezone) ? ' overdue' : ''}">${dueLabel(timer.dueDate)}</div>` : '';
+  return `<article class="timer-card ${state} priority-${timer.priority}" data-id="${timer.id}" aria-label="${escape(timer.title)}"><div class="card-heading"><h3>${escape(timer.title)}</h3><span class="card-kind" title="${timer.mode === 'timer' ? '타이머' : '스톱워치'}">${icon(timer.mode === 'timer' ? 'timer' : 'watch')}<span>${timer.mode === 'timer' ? 'TIMER' : 'STOPWATCH'}</span></span>${grouped ? '' : `<button class="drag-handle icon-button" data-action="drag" aria-label="${escape(timer.title)} 순서 이동. 방향키로 변경" title="끌어서 순서 변경">${icon('grip')}</button>`}</div>${due}<button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span></button>
+    <div class="progress-track" aria-hidden="true"><div class="progress-fill"></div></div><div class="card-bottom"><button class="minute-button" data-action="extend" aria-label="${escape(timer.title)} 1분 추가" ${state !== 'running' || timer.mode !== 'timer' ? 'hidden' : ''}>+1분</button><div class="card-controls"><button class="icon-button" data-action="reset" aria-label="${escape(timer.title)} 새로고침" title="초기화">${icon('reset')}</button><button class="icon-button" data-action="settings" aria-label="${escape(timer.title)} 설정" title="설정">${icon('sliders')}</button></div></div></article>`;
 }
 
+function renderDueGroups() {
+  if (view !== 'due') return;
+  const groups = new Map();
+  for (const timer of ordered('due')) {
+    const key = timer.dueDate || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(timer);
+  }
+  $('#due-groups').innerHTML = [...groups].map(([date, items]) => `<section class="due-group"><h2>${date ? dueLabel(date) : '마감 없음'}</h2><div class="timer-grid">${items.map(timer => card(timer, true)).join('')}</div></section>`).join('') || '<p class="empty-state">타이머가 없습니다.</p>';
+}
+function applyCardSize() {
+  document.documentElement.dataset.cardSize = prefs.cardSize;
+  $('#size-down').disabled = prefs.cardSize === 0;
+  $('#size-up').disabled = prefs.cardSize === 2;
+}
 function render() {
   const focus = document.activeElement;
   const focusId = focus?.closest('[data-id]')?.dataset.id;
   const focusAction = focus?.dataset.action;
-  $('#timer-grid').innerHTML = ordered().map(card).join('') + `<button class="add-card" id="add-card" aria-label="타이머 추가"><span class="add-card-icon">${icon('plus')}</span><strong>추가</strong></button>`;
-  $('#total-count').textContent = timers.length;
+  $('#timer-grid').innerHTML = ordered().map(timer => card(timer)).join('') + `<button class="add-card" id="add-card" aria-label="타이머 추가"><span class="add-card-icon">${icon('plus')}</span><strong>추가</strong></button>`;
+  $('#timer-sort').value = prefs.sortMode;
+  renderDueGroups();
   if (focusId && focusAction) $(`[data-id="${focusId}"] [data-action="${focusAction}"]`)?.focus({ preventScroll: true });
   updateClocks(); updateConnection();
-  renderCalendar();
+  renderCalendar(); applyCardSize();
 }
 
 function updateConnection() {
@@ -288,23 +320,21 @@ function updateClocks() {
   const now = clockNow();
   let running = 0, completed = 0;
   for (const timer of timers) {
-    const state = status(timer, now), el = $(`[data-id="${timer.id}"]`);
+    const state = status(timer, now), elements = document.querySelectorAll(`[data-id="${timer.id}"]`);
     if (state === 'running') running++;
     if (state === 'completed') completed++;
-    if (!el) continue;
-    if (!el.classList.contains(state)) {
+    const display = formatTime(value(timer, now), timer.mode);
+    for (const el of elements) {
       el.classList.remove('idle', 'running', 'paused', 'completed'); el.classList.add(state);
-      el.querySelector('.state-label').textContent = labels[state];
-      el.querySelector('.state-icon').innerHTML = icon(state === 'completed' ? 'check' : state === 'running' ? 'pause' : 'play');
+      const digits = el.querySelector('.time-digits');
+      if (digits.textContent !== display) digits.textContent = display;
+      digits.classList.toggle('long-time', display.length > 5);
+      const toggle = el.querySelector('[data-action="toggle"]');
+      toggle.disabled = state === 'completed';
+      toggle.setAttribute('aria-label', `${timer.title} ${state === 'completed' ? '완료' : state === 'running' ? '일시정지' : '시작'}`);
+      el.querySelector('[data-action="extend"]').hidden = state !== 'running' || timer.mode !== 'timer';
+      el.querySelector('.progress-fill').style.transform = `scaleX(${timer.mode === 'timer' ? Math.max(0, Math.min(1, 1 - value(timer, now) / timer.runDuration)) : 0})`;
     }
-    const display = formatTime(value(timer, now), timer.mode), digits = el.querySelector('.time-digits');
-    if (digits.textContent !== display) digits.textContent = display;
-    digits.classList.toggle('long-time', display.length > 5);
-    const toggle = el.querySelector('[data-action="toggle"]');
-    toggle.disabled = state === 'completed';
-    toggle.setAttribute('aria-label', `${timer.title} ${state === 'completed' ? '완료' : state === 'running' ? '일시정지' : '시작'}`);
-    el.querySelector('[data-action="extend"]').hidden = state !== 'running' || timer.mode !== 'timer';
-    el.querySelector('.progress-fill').style.transform = `scaleX(${timer.mode === 'timer' ? Math.max(0, Math.min(1, 1 - value(timer, now) / timer.runDuration)) : 0})`;
     const key = `${timer.id}:${timer.runId}`;
     if (state === 'completed' && !notified.has(key)) {
       saveTimerSession(timer, now);
@@ -313,7 +343,6 @@ function updateClocks() {
     }
   }
   syncAlarm(completed);
-  $('#running-count').innerHTML = running ? `<span class="live-dot"></span>${running}개 진행 중` : '';
   document.title = running ? `${running}개 진행 중 · minimal timer` : 'minimal timer';
 }
 
@@ -380,13 +409,21 @@ function openEditor(id = null) {
   form.elements.seconds.value = Math.floor(timer.duration / 1000) % 60;
   form.elements.dueDate.value = timer.dueDate || '';
   form.elements.priority.value = timer.priority || 'normal';
-  const options = activeTags().filter(tag => !timer.tags?.includes(tag.path)).map(tag => tag.path).concat(timer.tags || []);
-  $('#timer-tag-options').innerHTML = options.map(path => `<label class="tag-choice"><input type="checkbox" name="tags" value="${escape(path)}" ${timer.tags?.includes(path) ? 'checked' : ''}><span>${escape(path)}</span></label>`).join('') || '<span class="field-note">설정에서 태그를 추가하세요.</span>';
+  selectedTags = [...(timer.tags || [])];
+  $('#timer-tag-search').value = '';
+  renderTagPicker();
   $('#dialog-title').textContent = id ? '타이머 설정' : '새로운 시간';
   $('#save-button').innerHTML = id ? `저장하기 ${icon('check')}` : `만들기 ${icon('plus')}`;
   $('#edit-tools').hidden = !id;
   $('#form-error').textContent = '';
   updateModeNote(); $('#timer-dialog').showModal();
+}
+function renderTagPicker() {
+  const query = $('#timer-tag-search').value.trim(), paths = activeTags().map(tag => tag.path);
+  const available = paths.filter(path => !selectedTags.includes(path));
+  const suggestions = query ? available.filter(path => fuzzyTagMatch(path, query)).slice(0, 8) : [...new Set([...recentTags, ...available])].filter(path => available.includes(path)).slice(0, 5);
+  $('#selected-tags').innerHTML = selectedTags.map(path => `<button type="button" data-tag-remove="${escape(path)}" aria-label="${escape(path)} 제거">${escape(path)} ×</button>`).join('');
+  $('#timer-tag-options').innerHTML = suggestions.map(path => `<button type="button" data-tag-add="${escape(path)}" aria-label="${escape(path)} 선택">${escape(path)}</button>`).join('') || `<span class="field-note">${paths.length ? '일치하는 태그가 없습니다.' : '설정에서 태그를 추가하세요.'}</span>`;
 }
 function updateModeNote() {
   const mode = $('#timer-form').elements.mode.value;
@@ -397,6 +434,13 @@ function updateModeNote() {
 }
 
 $('#timer-form').addEventListener('change', updateModeNote);
+$('#timer-tag-search').addEventListener('input', renderTagPicker);
+$('#timer-form').addEventListener('click', event => {
+  const add = event.target.closest('[data-tag-add]')?.dataset.tagAdd, remove = event.target.closest('[data-tag-remove]')?.dataset.tagRemove;
+  if (add) { selectedTags.push(add); $('#timer-tag-search').value = ''; }
+  if (remove) selectedTags = selectedTags.filter(path => path !== remove);
+  if (add || remove) renderTagPicker();
+});
 $('#timer-form').addEventListener('submit', event => {
   event.preventDefault();
   try {
@@ -407,13 +451,13 @@ $('#timer-form').addEventListener('submit', event => {
     let number = 1;
     while (timers.some(timer => timer.title === `${prefix}${number}`)) number++;
     const title = form.elements.title.value.trim() || original?.title || `${prefix}${number}`;
-    const fields = { title, mode, duration, tags: [...form.querySelectorAll('[name="tags"]:checked')].map(input => input.value), dueDate: form.elements.dueDate.value || null, priority: form.elements.priority.value };
+    const fields = { title, mode, duration, tags: selectedTags, dueDate: form.elements.dueDate.value || null, priority: form.elements.priority.value };
     const next = original ? transition(original, 'edit', fields) : createTimer({ ...fields, position: nextPosition() });
-    if (commit(next, original)) { $('#timer-dialog').close(); toast(original ? '저장됨' : '추가됨'); }
+    if (commit(next, original)) { recentTags = [...new Set([...selectedTags, ...recentTags])].slice(0, 5); write('tempo.recentTags', recentTags); $('#timer-dialog').close(); toast(original ? '저장됨' : '추가됨'); }
   } catch (error) { $('#form-error').textContent = error.message; }
 });
 
-$('#timer-grid').addEventListener('click', event => {
+function handleCardClick(event) {
   if (drag?.moved) return;
   if (event.target.closest('#add-card')) return openEditor();
   const el = event.target.closest('[data-id]');
@@ -426,9 +470,11 @@ $('#timer-grid').addEventListener('click', event => {
   const next = transition(timer, action, {}, clockNow());
   if (next !== timer) commit(next, timer);
   if (action === 'reset') navigator.serviceWorker?.getRegistration().then(async reg => { for (const note of await reg?.getNotifications() || []) if (note.tag === `${timer.id}:${timer.runId}`) note.close(); });
-});
+}
+$('#timer-grid').addEventListener('click', handleCardClick);
+$('#due-groups').addEventListener('click', handleCardClick);
 $('#duplicate-button').onclick = () => { const original = timers.find(t => t.id === editingId); if (original && commit(duplicate(original, nextPosition()))) { $('#timer-dialog').close(); toast('대기 상태로 복제했어요.'); } };
-$('#move-first-button').onclick = () => { const original = timers.find(t => t.id === editingId); if (original && commit(transition(original, 'position', { position: Math.min(...timers.map(t => t.position)) - 1 }), original)) $('#timer-dialog').close(); };
+$('#move-first-button').onclick = () => { const original = timers.find(t => t.id === editingId); prefs.sortMode = 'manual'; savePrefs(); if (original && commit(transition(original, 'position', { position: Math.min(...timers.map(t => t.position)) - 1 }), original)) $('#timer-dialog').close(); };
 $('#delete-button').onclick = () => { const timer = timers.find(t => t.id === editingId); if (!timer) return; $('#delete-description').textContent = `‘${timer.title}’ 블록을 삭제합니다. 지난 기록은 남습니다.`; $('#delete-dialog').showModal(); };
 $('#confirm-delete').onclick = () => { const timer = timers.find(t => t.id === editingId); if (timer && commit(timer, timer, true)) { $('#delete-dialog').close(); $('#timer-dialog').close(); toast('타이머를 삭제했어요.'); } };
 document.querySelectorAll('[data-close]').forEach(button => { button.onclick = () => $(`#${button.dataset.close}`).close(); });
@@ -497,8 +543,21 @@ $('#save-timezone').onclick = async () => {
   try { if (user) await saveTimezone(next); timezone = next; write(sideKey('timezone'), next); renderCalendar(); toast('시간대 저장됨'); }
   catch (error) { toast(error.message, true); }
 };
-$('#timers-view').onclick = () => { view = 'timers'; $('#timer-workspace').hidden = false; $('#calendar-workspace').hidden = true; $('#timers-view').classList.add('active'); $('#calendar-view').classList.remove('active'); };
-$('#calendar-view').onclick = () => { view = 'calendar'; $('#timer-workspace').hidden = true; $('#calendar-workspace').hidden = false; $('#calendar-view').classList.add('active'); $('#timers-view').classList.remove('active'); renderCalendar(); };
+function setView(next) {
+  view = next;
+  for (const name of ['timers', 'calendar', 'due']) {
+    $(`#${name === 'timers' ? 'timer' : name}-workspace`).hidden = name !== next;
+    $(`#${name}-view`).classList.toggle('active', name === next);
+  }
+  if (next === 'calendar') renderCalendar();
+  if (next === 'due') renderDueGroups(); else $('#due-groups').innerHTML = '';
+}
+$('#timers-view').onclick = () => setView('timers');
+$('#calendar-view').onclick = () => setView('calendar');
+$('#due-view').onclick = () => setView('due');
+$('#timer-sort').onchange = event => { prefs.sortMode = event.target.value; savePrefs(); render(); };
+$('#size-down').onclick = () => { prefs.cardSize = Math.max(0, prefs.cardSize - 1); savePrefs(); applyCardSize(); };
+$('#size-up').onclick = () => { prefs.cardSize = Math.min(2, prefs.cardSize + 1); savePrefs(); applyCardSize(); };
 function changeMonth(delta) { const [year, month] = calendarMonth.split('-').map(Number); calendarMonth = new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7); renderCalendar(); }
 $('#previous-month').onclick = () => changeMonth(-1);
 $('#next-month').onclick = () => changeMonth(1);
@@ -627,10 +686,10 @@ function finishDrag(cancel = false) {
   if (!cancel && moved && drag.target) {
     const list = ordered().filter(t => t.id !== drag.id);
     const index = list.findIndex(t => t.id === drag.target) + (drag.after ? 1 : 0);
-    const before = list[index - 1]?.position ?? (list[0]?.position ?? 0) - 2;
-    const after = list[index]?.position ?? before + 2;
     const timer = timers.find(t => t.id === drag.id);
-    commit(transition(timer, 'position', { position: (before + after) / 2 }), timer);
+    list.splice(index, 0, timer);
+    prefs.sortMode = 'manual'; savePrefs();
+    for (const [position, item] of list.entries()) if (item.position !== position) commit(transition(timers.find(t => t.id === item.id), 'position', { position }), timers.find(t => t.id === item.id));
   }
   document.querySelectorAll('.dragging,.drop-before,.drop-after').forEach(el => el.classList.remove('dragging', 'drop-before', 'drop-after'));
   setTimeout(() => { drag = null; }, 0);
@@ -643,9 +702,9 @@ $('#timer-grid').addEventListener('keydown', event => {
   const list = ordered(), index = list.findIndex(t => t.id === event.target.closest('[data-id]').dataset.id);
   const direction = ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1;
   if (!list[index + direction]) return;
-  const neighbor = list[index + direction], outer = list[index + direction * 2];
-  const position = outer ? (neighbor.position + outer.position) / 2 : neighbor.position + direction;
-  commit(transition(list[index], 'position', { position }), list[index]);
+  [list[index], list[index + direction]] = [list[index + direction], list[index]];
+  prefs.sortMode = 'manual'; savePrefs();
+  for (const [position, item] of list.entries()) if (item.position !== position) commit(transition(timers.find(t => t.id === item.id), 'position', { position }), timers.find(t => t.id === item.id));
 });
 
 let sessionSetup = Promise.resolve();

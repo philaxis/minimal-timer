@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeSessions, normalizeTag, replaceTagPrefix, tagMatches, tagPrefixes, unionDuration, splitByDay, timelineLayout } from '../src/history.js';
+import { fuzzyTagMatch, mergeSessions, normalizeTag, replaceTagPrefix, tagMatches, tagPrefixes, unionDuration, splitByDay, timelineLayout } from '../src/history.js';
 import { createTimer, sessionRecord, transition } from '../src/model.js';
 
 test('nested tags normalize, query descendants and merge without duplicates', () => {
@@ -8,6 +8,8 @@ test('nested tags normalize, query descendants and merge without duplicates', ()
   assert.equal(normalizeTag('#SNU//수학'), null);
   assert.equal(tagMatches('#SNU/26-2학기/선형대수학', '#SNU'), true);
   assert.equal(tagMatches('#SNUT/선형대수학', '#SNU'), false);
+  assert.equal(fuzzyTagMatch('#SNU/철학', 'S철'), true);
+  assert.equal(fuzzyTagMatch('#SNU/수학', 'S철'), false);
   assert.deepEqual(tagPrefixes('#SNU/26-2학기/선형대수학'), ['#SNU', '#SNU/26-2학기', '#SNU/26-2학기/선형대수학']);
   assert.deepEqual(replaceTagPrefix(['#A/수학', '#B/수학', '#A/물리'], '#A', '#B'), ['#B/수학', '#B/물리']);
 });

@@ -17,6 +17,14 @@ export function tagMatches(path, parent) {
   return !!tag && !!query && (tag === query || tag.startsWith(`${query}/`));
 }
 
+export function fuzzyTagMatch(path, query) {
+  const haystack = String(path).replace(/[#/\s]/g, '').toLocaleLowerCase();
+  const needle = String(query).replace(/[#/\s]/g, '').toLocaleLowerCase();
+  let index = 0;
+  for (const character of haystack) if (character === needle[index]) index++;
+  return !!needle && index === needle.length;
+}
+
 export function tagPrefixes(path) {
   path = normalizeTag(path);
   if (!path) return [];
