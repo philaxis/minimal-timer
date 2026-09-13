@@ -52,6 +52,7 @@ browser('find', 'role', 'button', 'click', '--name', '수학 시작');
 browser('find', 'role', 'button', 'click', '--name', '총 공부시간 시작');
 check('document.querySelectorAll(".timer-card.running").length === 2');
 check('![...document.querySelectorAll(".timer-card")].some(card => card.textContent.includes("일시정지"))');
+check('new Set([...document.querySelectorAll(".timer-card")].map(card => Math.round(card.getBoundingClientRect().right - card.querySelector(".card-controls").getBoundingClientRect().right))).size === 1');
 browser('find', 'role', 'button', 'click', '--name', '수학 1분 추가');
 check('JSON.parse(localStorage.getItem("tempo.guest.v1"))[1].runDuration === 1560000');
 browser('find', 'role', 'button', 'click', '--name', '수학 설정');

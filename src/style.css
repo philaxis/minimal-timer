@@ -50,7 +50,7 @@ h1, h2 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: -.4px; }
 .progress-track { height: 2px; background: #eceee5; border-radius: 1px; overflow: hidden; }
 .progress-fill { background: #889d67; height: 100%; transform: scaleX(0); transform-origin: left; transition: transform 100ms linear; }
 .card-bottom { display: flex; justify-content: space-between; align-items: center; gap: 3px; min-height: 30px; margin-top: 3px; }
-.card-controls { display: flex; align-items: center; gap: 1px; margin-right: -8px; }
+.card-controls { display: flex; align-items: center; gap: 1px; margin-left: auto; margin-right: -8px; }
 .card-controls .icon-button { width: 27px; height: 28px; color: #8c9183; }
 .card-controls .icon { width: 14px; height: 14px; }
 .minute-button { padding: 4px 6px; font-size: 9px; font-weight: 500; color: var(--green-ink); border-radius: 4px; }
