@@ -1,4 +1,4 @@
-name: Deploy tempo to GitHub Pages
+name: Deploy minimal timer to GitHub Pages
 
 on:
   push:
