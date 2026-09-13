@@ -55,7 +55,8 @@ const initial = () => [
   createTimer({ title: '스톱워치', mode: 'stopwatch', position: 2 }),
 ];
 let timers = readBoard(GUEST_KEY, initial());
-let prefs = { sound: false, notifications: false, ...read('tempo.preferences', {}) };
+const savedPrefs = read('tempo.preferences', {});
+let prefs = { sound: false, notifications: false, ...savedPrefs, push: savedPrefs.push ?? savedPrefs.notifications ?? false };
 let user = null, channel = null, cloudReady = false, connected = false, syncing = false;
 let activeKey = GUEST_KEY, editingId = null, deferredInstall = null, audioContext, drag = null;
 let noticeTimeout, authGeneration = 0;
@@ -155,8 +156,8 @@ function updateConnection() {
 async function notify(timer) {
   sound();
   if (!prefs.notifications || !('Notification' in window) || Notification.permission !== 'granted') return;
-  // Cloud push owns system notifications when connected, avoiding a foreground/push double alert.
-  if (user && cloudReady) return;
+  // Cloud push owns system notifications when available, avoiding a duplicate foreground alert.
+  if (user && cloudReady && prefs.push) return;
   const registration = await navigator.serviceWorker?.getRegistration();
   const options = { body: '수고했어요. 새로고침하면 다시 시작할 수 있어요.', icon: `${BASE}icon-192.png`, tag: `${timer.id}:${timer.runId}`, silent: true, data: { timerId: timer.id } };
   if (registration) await registration.showNotification(`${timer.title} · 완료`, options);
@@ -306,7 +307,7 @@ $('#account-action').onclick = async () => {
   if (!user || user.is_anonymous) return login();
   try {
     await queue; await removePush();
-    prefs.notifications = false; savePrefs();
+    prefs.notifications = false; prefs.push = false; savePrefs();
     const { error } = await client.auth.signOut({ scope: 'local' });
     if (error) throw error;
     $('#preferences-dialog').close(); toast('이 기기에서 로그아웃했어요.');
@@ -330,7 +331,7 @@ async function login() {
 
 $('#sound-toggle').onchange = async event => {
   prefs.sound = event.target.checked; savePrefs(); sound();
-  if (prefs.notifications && user) await registerPush(prefs.sound).catch(() => toast('소리 설정을 알림 서버에 반영하지 못했어요.', true));
+  if (prefs.notifications && prefs.push && user) await registerPush(prefs.sound).catch(() => { prefs.push = false; savePrefs(); });
 };
 $('#notification-toggle').onchange = async event => {
   const checkbox = event.target;
@@ -340,17 +341,25 @@ $('#notification-toggle').onchange = async event => {
       if (!('Notification' in window)) throw new Error('이 브라우저에서는 홈 화면에 앱을 설치한 후 알림을 켜주세요.');
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') throw new Error('브라우저 설정에서 알림 권한을 허용해주세요.');
-      if (!client) throw new Error('백그라운드 알림 연결을 준비 중이에요.');
-      if (!user) {
-        const { data, error } = await client.auth.signInAnonymously();
-        if (error) throw error;
-        await setSession(data.session);
+      let pushError = null;
+      try {
+        if (!client) throw new Error('백그라운드 알림 연결을 사용할 수 없습니다.');
+        if (!user) {
+          const { data, error } = await client.auth.signInAnonymously();
+          if (error) throw error;
+          await setSession(data.session);
+        }
+        await queue;
+        if (!cloudReady) throw new Error('백그라운드 알림 연결을 사용할 수 없습니다.');
+        await registerPush(prefs.sound);
+        prefs.push = true;
+      } catch (error) {
+        prefs.push = false;
+        pushError = error;
       }
-      await queue;
-      if (!cloudReady) throw new Error('타이머 저장 후 알림을 켤 수 있어요. 잠시 뒤 다시 시도해주세요.');
-      await registerPush(prefs.sound);
-      prefs.notifications = true; toast('이 기기에서 완료 알림을 받아요.');
-    } else { await removePush(); prefs.notifications = false; }
+      prefs.notifications = true;
+      toast(pushError ? (navigator.brave ? '알림 켜짐 · Brave의 Google 푸시 메시징을 켜면 백그라운드에서도 알림' : '알림 켜짐 · 백그라운드 알림은 브라우저에서 차단됨') : '알림 켜짐');
+    } else { await removePush().catch(() => {}); prefs.notifications = false; prefs.push = false; }
     savePrefs();
   } catch (error) { checkbox.checked = prefs.notifications; toast(error.message, true); }
   finally { checkbox.disabled = false; }
@@ -463,7 +472,7 @@ async function applySession(session) {
     connected = ok; updateConnection();
     if (ok) refreshCloud().catch(() => { connected = false; updateConnection(); });
   });
-  if (prefs.notifications && 'Notification' in window && Notification.permission === 'granted') registerPush(prefs.sound).catch(() => { prefs.notifications = false; savePrefs(); });
+  if (prefs.notifications && prefs.push && 'Notification' in window && Notification.permission === 'granted') registerPush(prefs.sound).catch(() => { prefs.push = false; savePrefs(); });
   render();
 }
 
