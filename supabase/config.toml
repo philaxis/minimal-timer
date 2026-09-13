@@ -1,0 +1,5 @@
+project_id = "tempo"
+
+[functions.tempo-push]
+# Dispatch verifies its private secret; GET verifies a random per-timer capability.
+verify_jwt = false
