@@ -40,9 +40,9 @@ h1, h2 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: -.4px; }
 .card-kind .icon { width: 12px; height: 12px; }
 .drag-handle { flex: 0 0 auto; width: 24px; height: 24px; margin-right: -7px; color: #b8bbaf; touch-action: none; cursor: grab; }
 .drag-handle .icon { height: 13px; width: 13px; }
-.card-due { margin-top: 5px; color: #667653; font-size: 11px; font-weight: 700; letter-spacing: -.2px; }
+.card-due { min-height: 17px; margin-top: 5px; color: #667653; font-size: 11px; font-weight: 700; line-height: 17px; letter-spacing: -.2px; }
 .card-due.overdue { color: #b74e36; }
-.priority-high { border-left: 3px solid #d67b58; }
+.important-mark { flex: 0 0 auto; color: #d26745; font-size: 15px; font-weight: 800; line-height: 1; }
 .clock-button { width: 100%; text-align: left; display: flex; align-items: center; padding: 12px 0 11px; border-radius: 5px; }
 .clock-button:active:not(:disabled) { transform: none; }
 .time-digits { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: var(--clock-size); font-weight: 400; letter-spacing: -2.4px; line-height: 1.06; font-variant-numeric: tabular-nums; color: #363a2e; }
@@ -87,15 +87,20 @@ input::placeholder { color: #a4aa9b; }
 .view-tabs button { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border-radius: 6px; color: var(--muted); font-size: 12px; }
 .view-tabs button.active { background: #e4e8db; color: var(--ink); font-weight: 700; }
 .view-tabs .icon { width: 15px; height: 15px; }
-.view-controls { display: flex; align-items: center; gap: 7px; }
+.view-controls { flex: 1; display: flex; align-items: center; gap: 7px; }
 .view-controls select { min-height: 34px; padding: 6px 9px; font-size: 11px; background: transparent; }
-.size-controls { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.size-controls { display: flex; margin-left: auto; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .size-controls button { width: 34px; height: 32px; font-size: 17px; color: #686e60; }
 .size-controls button + button { border-left: 1px solid var(--line); }
 .size-controls button:hover { background: #e8eae1; }.size-controls button:disabled { color: #c5c8be; }
 .metadata-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
 select { border: 1px solid #dfe3d5; border-radius: 6px; background: #f7f8f3; color: var(--ink); padding: 12px; min-height: 45px; font: inherit; font-size: 13px; }
 .metadata-fields input, .metadata-fields select { width: 100%; height: 45px; min-height: 45px; padding-top: 0; padding-bottom: 0; }
+.importance-toggle { display: inline-flex; }
+.importance-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.importance-toggle span { display: flex; align-items: center; justify-content: center; width: 45px; height: 45px; border: 1px solid #dfe3d5; border-radius: 6px; background: #f7f8f3; color: #9ba093; font-size: 22px; font-weight: 800; cursor: pointer; }
+.importance-toggle input:checked + span { border-color: #dc8b6c; background: #f7e2d8; color: #c35636; }
+.importance-toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
 .tag-picker { border: 0; padding: 0; margin: 20px 0 0; }
 #timer-tag-search { min-height: 40px; padding: 9px 11px; }
 .selected-tags, .tag-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -146,8 +151,8 @@ select { border: 1px solid #dfe3d5; border-radius: 6px; background: #f7f8f3; col
   :root[data-card-size="1"] { --card-height: 174px; --card-pad: 9px; --clock-size: 29px; }
   :root[data-card-size="2"] { --card-height: 204px; --card-pad: 10px; --clock-size: 32px; }
   .topbar { padding: 0 10px; height: 64px; }.brand { font-size: 17px; }.top-actions { gap: 2px; }.top-divider { display: none; }.login-button { padding: 0 7px; margin-left: 0; height: 34px; font-size: 8px; gap: 5px; }.top-actions > .icon-button { width: 27px; }.top-actions .icon { width: 16px; }
-  main { padding: 18px 8px 28px; }.view-bar { align-items: flex-start; margin-bottom: 12px; gap: 6px; }.view-tabs { gap: 1px; }.view-tabs button { gap: 3px; padding: 7px 6px; font-size: 9px; }.view-tabs .icon { width: 12px; height: 12px; }.view-controls { gap: 4px; }.view-controls select { width: 76px; padding: 5px; font-size: 9px; }.size-controls button { width: 26px; height: 30px; }
-  .primary-button { min-height: 39px; font-size: 11px; padding: 0 13px; }.timer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.timer-card { border-radius: 8px; }.card-heading { gap: 3px; height: 18px; }.timer-card h3 { font-size: 10px; }.card-kind { gap: 2px; font-size: 5px; letter-spacing: .2px; }.card-kind .icon { width: 9px; height: 9px; }.drag-handle { width: 18px; height: 20px; margin-right: -5px; }.drag-handle .icon { width: 10px; height: 10px; }.card-due { margin-top: 4px; font-size: 8px; }.clock-button { padding: 11px 0 9px; }.time-digits { letter-spacing: -1.5px; }.time-digits.long-time { letter-spacing: -1px; }.card-bottom { min-height: 25px; }.card-controls { margin-right: -5px; }.card-controls .icon-button { width: 22px; height: 24px; }.card-controls .icon { width: 12px; height: 12px; }.minute-button { padding: 3px; font-size: 7px; }.add-card { border-radius: 8px; }.add-card-icon { width: 27px; height: 27px; }.add-card strong { font-size: 9px; }.timer-card.drop-before::before { inset: 0 auto 0 0; width: 3px; height: auto; }.timer-card.drop-after::after { inset: 0 0 0 auto; width: 3px; height: auto; }
+  main { padding: 18px 8px 28px; }.view-bar { align-items: flex-start; margin-bottom: 12px; gap: 6px; }.view-tabs { gap: 1px; }.view-tabs button { gap: 3px; padding: 7px 6px; font-size: 9px; }.view-tabs .icon { width: 12px; height: 12px; }.view-controls { gap: 4px; }.view-controls select { width: 72px; padding: 5px; font-size: 9px; }.size-controls button { width: 26px; height: 30px; }
+  .primary-button { min-height: 39px; font-size: 11px; padding: 0 13px; }.timer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.timer-card { border-radius: 8px; }.card-heading { gap: 3px; height: 18px; }.timer-card h3 { font-size: 10px; }.important-mark { font-size: 11px; }.card-kind { gap: 2px; font-size: 5px; letter-spacing: .2px; }.card-kind .icon { width: 9px; height: 9px; }.drag-handle { width: 18px; height: 20px; margin-right: -5px; }.drag-handle .icon { width: 10px; height: 10px; }.card-due { min-height: 13px; margin-top: 4px; font-size: 8px; line-height: 13px; }.clock-button { padding: 11px 0 9px; }.time-digits { letter-spacing: -1.5px; }.time-digits.long-time { letter-spacing: -1px; }.card-bottom { min-height: 25px; }.card-controls { margin-right: -5px; }.card-controls .icon-button { width: 22px; height: 24px; }.card-controls .icon { width: 12px; height: 12px; }.minute-button { padding: 3px; font-size: 7px; }.add-card { border-radius: 8px; }.add-card-icon { width: 27px; height: 27px; }.add-card strong { font-size: 9px; }.timer-card.drop-before::before { inset: 0 auto 0 0; width: 3px; height: auto; }.timer-card.drop-after::after { inset: 0 0 0 auto; width: 3px; height: auto; }
   dialog { padding: 24px; }.dialog-heading h2 { font-size: 21px; }.calendar-toolbar { flex-wrap: wrap; }.calendar-toolbar select { width: calc(50% - 5px); max-width: none; margin-left: 0; }.month-grid { gap: 2px; }.calendar-day { min-height: 77px; padding: 4px; gap: 2px; }.calendar-day .date-number, .calendar-day strong { font-size: 9px; }.calendar-day small { font-size: 7px; }.metadata-fields { gap: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

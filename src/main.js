@@ -77,7 +77,7 @@ if (!validTimezone(timezone)) timezone = deviceTimezone;
 const savedPrefs = read('tempo.preferences', {});
 let prefs = { sound: false, notifications: false, cardSize: 0, sortMode: 'due', ...savedPrefs, push: savedPrefs.push ?? savedPrefs.notifications ?? false };
 prefs.cardSize = Math.max(0, Math.min(2, Number(prefs.cardSize) || 0));
-if (!['due', 'priority', 'manual'].includes(prefs.sortMode)) prefs.sortMode = 'due';
+if (!['due', 'manual'].includes(prefs.sortMode)) prefs.sortMode = 'due';
 let selectedTags = [], recentTags = read('tempo.recentTags', []);
 if (!Array.isArray(recentTags)) recentTags = [];
 let user = null, channel = null, cloudReady = false, connected = false, syncing = false;
@@ -97,15 +97,15 @@ $('#app').innerHTML = `
   <header class="topbar"><a class="brand" href="${BASE}" aria-label="minimal timer 홈">minimal timer</a>
     <div class="top-actions"><button class="icon-button cloud-status" id="cloud-button" aria-label="기기 간 연동 안 됨" title="기기 간 연동 안 됨">${icon('cloudOff')}</button><span class="top-divider"></span><button class="icon-button" id="preferences-button" aria-label="앱 설정">${icon('sliders')}</button><button class="login-button" id="login-button"><span class="google-g">G</span><span id="login-label">Google 로그인</span></button></div>
   </header>
-  <main><div class="view-bar"><nav class="view-tabs" aria-label="보기"><button id="timers-view" class="active">${icon('list')} 타이머</button><button id="calendar-view">${icon('calendar')} 달력</button><button id="due-view">${icon('tag')} 마감별</button></nav><div class="view-controls"><select id="timer-sort" aria-label="타이머 정렬"><option value="due">마감일순</option><option value="priority">중요도순</option><option value="manual">직접 정렬</option></select><div class="size-controls" aria-label="블록 크기"><button id="size-down" aria-label="블록 작게">−</button><button id="size-up" aria-label="블록 크게">+</button></div></div></div><section class="workspace" id="timer-workspace" aria-label="타이머">
+  <main><div class="view-bar"><nav class="view-tabs" aria-label="보기"><button id="timers-view" class="active">${icon('list')} 타이머</button><button id="calendar-view">${icon('calendar')} 달력</button><button id="due-view">${icon('tag')} 마감별</button></nav><div class="view-controls"><select id="timer-sort" aria-label="타이머 정렬"><option value="due">마감일순</option><option value="manual">직접 정렬</option></select><div class="size-controls" aria-label="블록 크기"><button id="size-down" aria-label="블록 작게">−</button><button id="size-up" aria-label="블록 크게">+</button></div></div></div><section class="workspace" id="timer-workspace" aria-label="타이머">
       <div class="timer-grid" id="timer-grid"></div>
-    </section><section class="calendar-workspace" id="calendar-workspace" aria-label="달력" hidden><div class="calendar-toolbar"><button class="icon-button" id="previous-month" aria-label="이전 달">${icon('left')}</button><h1 id="calendar-title"></h1><button class="icon-button" id="next-month" aria-label="다음 달">${icon('right')}</button><select id="calendar-tag-filter" aria-label="태그 필터"><option value="">모든 태그</option></select><select id="calendar-priority-filter" aria-label="중요도 필터"><option value="">모든 중요도</option><option value="high">높음</option><option value="normal">보통</option><option value="low">낮음</option></select></div><div class="month-grid" id="month-grid"></div></section><section id="due-workspace" aria-label="마감별" hidden><div id="due-groups"></div></section>
+    </section><section class="calendar-workspace" id="calendar-workspace" aria-label="달력" hidden><div class="calendar-toolbar"><button class="icon-button" id="previous-month" aria-label="이전 달">${icon('left')}</button><h1 id="calendar-title"></h1><button class="icon-button" id="next-month" aria-label="다음 달">${icon('right')}</button><select id="calendar-tag-filter" aria-label="태그 필터"><option value="">모든 태그</option></select><select id="calendar-priority-filter" aria-label="중요 필터"><option value="">모두</option><option value="high">중요</option><option value="normal">보통</option></select></div><div class="month-grid" id="month-grid"></div></section><section id="due-workspace" aria-label="마감별" hidden><div id="due-groups"></div></section>
   </main>
   <dialog id="timer-dialog"><form id="timer-form"><div class="dialog-heading"><h2 id="dialog-title">새 타이머</h2><button class="icon-button" type="button" data-close="timer-dialog" aria-label="닫기">${icon('close')}</button></div>
     <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="비워두면 자동 지정" autocomplete="off" />
     <fieldset class="mode-picker"><legend class="field-label">모드</legend><label><input type="radio" name="mode" value="timer" checked><span>${icon('timer')} 타이머</span></label><label><input type="radio" name="mode" value="stopwatch"><span>${icon('watch')} 스톱워치</span></label></fieldset>
     <div id="duration-fields"><span class="field-label">설정 시간</span><div class="duration-inputs"><label><input name="hours" type="number" min="0" max="168" value="0" inputmode="numeric" required><span>시간</span></label><b>:</b><label><input name="minutes" type="number" min="0" max="59" value="25" inputmode="numeric" required><span>분</span></label><b>:</b><label><input name="seconds" type="number" min="0" max="59" value="0" inputmode="numeric" required><span>초</span></label></div></div>
-    <div class="metadata-fields"><label><span class="field-label">종료일</span><input name="dueDate" type="date"></label><label><span class="field-label">중요도</span><select name="priority"><option value="low">낮음</option><option value="normal" selected>보통</option><option value="high">높음</option></select></label></div>
+    <div class="metadata-fields"><label><span class="field-label">종료일</span><input name="dueDate" type="date"></label><label><span class="field-label">중요</span><span class="importance-toggle"><input name="important" type="checkbox" aria-label="중요 표시"><span aria-hidden="true">!</span></span></label></div>
     <fieldset class="tag-picker"><legend class="field-label">태그</legend><input id="timer-tag-search" type="search" placeholder="태그 검색" autocomplete="off"><div class="selected-tags" id="selected-tags"></div><div class="tag-suggestions" id="timer-tag-options"></div></fieldset>
     <p class="field-note" id="mode-note">설정한 시간부터 거꾸로 셉니다.</p><p class="form-error" id="form-error" role="alert"></p>
     <div class="dialog-tools" id="edit-tools"><button type="button" class="text-button" id="duplicate-button">${icon('copy')} 복제</button><button type="button" class="text-button" id="move-first-button">${icon('arrow')} 맨 앞으로</button><button type="button" class="text-button danger" id="delete-button">${icon('trash')} 삭제</button></div>
@@ -137,13 +137,13 @@ function persistWorkspace() {
   persist(); write(sideKey('tags'), tags); write(sideKey('sessions'), sessions); write(sideKey('timezone'), timezone);
 }
 function savePrefs() { write('tempo.preferences', prefs); }
-const priorityRank = { high: 0, normal: 1, low: 2 };
+const priorityRank = { high: 0, normal: 1, low: 1 };
 function ordered(mode = prefs.sortMode) {
   return [...timers].sort((a, b) => {
     const position = a.position - b.position || a.id.localeCompare(b.id);
     const due = (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99');
     const priority = priorityRank[a.priority] - priorityRank[b.priority];
-    return mode === 'due' ? due || priority || position : mode === 'priority' ? priority || due || position : position;
+    return mode === 'due' ? due || priority || position : position;
   });
 }
 function nextPosition() { return Math.max(-1, ...timers.map(t => t.position)) + 1; }
@@ -165,7 +165,7 @@ function dueLabel(date) {
 }
 function filtered(session) {
   const tag = $('#calendar-tag-filter')?.value, priority = $('#calendar-priority-filter')?.value;
-  return (!tag || session.tags.some(path => tagMatches(path, tag))) && (!priority || session.priority === priority);
+  return (!tag || session.tags.some(path => tagMatches(path, tag))) && (!priority || (priority === 'high' ? session.priority === 'high' : session.priority !== 'high'));
 }
 function sessionParts(day = null) {
   return sessions.filter(filtered).flatMap(session => splitByDay(session, timezone)).filter(part => !day || part.day === day);
@@ -262,8 +262,8 @@ function syncAlarm(completed) {
 
 function card(timer, grouped = false) {
   const state = status(timer, clockNow());
-  const due = timer.dueDate ? `<div class="card-due${timer.dueDate < dayKey(Date.now(), timezone) ? ' overdue' : ''}">${dueLabel(timer.dueDate)}</div>` : '';
-  return `<article class="timer-card ${state} priority-${timer.priority}" data-id="${timer.id}" aria-label="${escape(timer.title)}"><div class="card-heading"><h3>${escape(timer.title)}</h3><span class="card-kind" title="${timer.mode === 'timer' ? '타이머' : '스톱워치'}">${icon(timer.mode === 'timer' ? 'timer' : 'watch')}<span>${timer.mode === 'timer' ? 'TIMER' : 'STOPWATCH'}</span></span>${grouped ? '' : `<button class="drag-handle icon-button" data-action="drag" aria-label="${escape(timer.title)} 순서 이동. 방향키로 변경" title="끌어서 순서 변경">${icon('grip')}</button>`}</div>${due}<button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span></button>
+  const due = `<div class="card-due${timer.dueDate && timer.dueDate < dayKey(Date.now(), timezone) ? ' overdue' : ''}">${timer.dueDate ? dueLabel(timer.dueDate) : ''}</div>`;
+  return `<article class="timer-card ${state} priority-${timer.priority}" data-id="${timer.id}" aria-label="${escape(timer.title)}"><div class="card-heading"><h3>${escape(timer.title)}</h3>${timer.priority === 'high' ? '<span class="important-mark" title="중요">!</span>' : ''}<span class="card-kind" title="${timer.mode === 'timer' ? '타이머' : '스톱워치'}">${icon(timer.mode === 'timer' ? 'timer' : 'watch')}<span>${timer.mode === 'timer' ? 'TIMER' : 'STOPWATCH'}</span></span>${grouped ? '' : `<button class="drag-handle icon-button" data-action="drag" aria-label="${escape(timer.title)} 순서 이동. 방향키로 변경" title="끌어서 순서 변경">${icon('grip')}</button>`}</div>${due}<button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span></button>
     <div class="progress-track" aria-hidden="true"><div class="progress-fill"></div></div><div class="card-bottom"><button class="minute-button" data-action="extend" aria-label="${escape(timer.title)} 1분 추가" ${state !== 'running' || timer.mode !== 'timer' ? 'hidden' : ''}>+1분</button><div class="card-controls"><button class="icon-button" data-action="reset" aria-label="${escape(timer.title)} 새로고침" title="초기화">${icon('reset')}</button><button class="icon-button" data-action="settings" aria-label="${escape(timer.title)} 설정" title="설정">${icon('sliders')}</button></div></div></article>`;
 }
 
@@ -408,7 +408,7 @@ function openEditor(id = null) {
   form.elements.minutes.value = Math.floor(timer.duration / 60_000) % 60;
   form.elements.seconds.value = Math.floor(timer.duration / 1000) % 60;
   form.elements.dueDate.value = timer.dueDate || '';
-  form.elements.priority.value = timer.priority || 'normal';
+  form.elements.important.checked = timer.priority === 'high';
   selectedTags = [...(timer.tags || [])];
   $('#timer-tag-search').value = '';
   renderTagPicker();
@@ -451,7 +451,7 @@ $('#timer-form').addEventListener('submit', event => {
     let number = 1;
     while (timers.some(timer => timer.title === `${prefix}${number}`)) number++;
     const title = form.elements.title.value.trim() || original?.title || `${prefix}${number}`;
-    const fields = { title, mode, duration, tags: selectedTags, dueDate: form.elements.dueDate.value || null, priority: form.elements.priority.value };
+    const fields = { title, mode, duration, tags: selectedTags, dueDate: form.elements.dueDate.value || null, priority: form.elements.important.checked ? 'high' : 'normal' };
     const next = original ? transition(original, 'edit', fields) : createTimer({ ...fields, position: nextPosition() });
     if (commit(next, original)) { recentTags = [...new Set([...selectedTags, ...recentTags])].slice(0, 5); write('tempo.recentTags', recentTags); $('#timer-dialog').close(); toast(original ? '저장됨' : '추가됨'); }
   } catch (error) { $('#form-error').textContent = error.message; }
