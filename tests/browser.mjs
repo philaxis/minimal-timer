@@ -50,6 +50,7 @@ browser('find', 'role', 'button', 'click', '--name', '완료 확인 새로고침
 check('document.querySelectorAll(".timer-card.completed").length === 0');
 browser('set', 'viewport', '390', '844');
 check('document.documentElement.scrollWidth <= 390');
+check('document.querySelectorAll(".timer-card")[0].offsetTop === document.querySelectorAll(".timer-card")[1].offsetTop');
 browser('screenshot', '/tmp/tempo-mobile.png');
 browser('find', 'role', 'button', 'click', '--name', 'Google 로그인');
 const tabs = browser('tab', 'list');
