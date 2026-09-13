@@ -58,7 +58,7 @@ let timers = readBoard(GUEST_KEY, initial());
 const savedPrefs = read('tempo.preferences', {});
 let prefs = { sound: false, notifications: false, ...savedPrefs, push: savedPrefs.push ?? savedPrefs.notifications ?? false };
 let user = null, channel = null, cloudReady = false, connected = false, syncing = false;
-let activeKey = GUEST_KEY, editingId = null, deferredInstall = null, audioContext, drag = null;
+let activeKey = GUEST_KEY, editingId = null, deferredInstall = null, audioContext, alarmTimer, drag = null;
 let noticeTimeout, authGeneration = 0;
 let queue = Promise.resolve();
 const pending = new Map();
@@ -122,6 +122,13 @@ function sound() {
     }
   } catch { /* Sound is optional on browsers without Web Audio. */ }
 }
+function syncAlarm(completed) {
+  if (prefs.sound && completed) {
+    if (!alarmTimer) { sound(); alarmTimer = setInterval(sound, 2000); }
+  } else if (alarmTimer) {
+    clearInterval(alarmTimer); alarmTimer = null;
+  }
+}
 
 function card(timer) {
   const state = status(timer, clockNow());
@@ -154,7 +161,6 @@ function updateConnection() {
 }
 
 async function notify(timer) {
-  sound();
   if (!prefs.notifications || !('Notification' in window) || Notification.permission !== 'granted') return;
   // Cloud push owns system notifications when available, avoiding a duplicate foreground alert.
   if (user && cloudReady && prefs.push) return;
@@ -165,10 +171,11 @@ async function notify(timer) {
 
 function updateClocks() {
   const now = clockNow();
-  let running = 0;
+  let running = 0, completed = 0;
   for (const timer of timers) {
     const state = status(timer, now), el = $(`[data-id="${timer.id}"]`);
     if (state === 'running') running++;
+    if (state === 'completed') completed++;
     if (!el) continue;
     if (!el.classList.contains(state)) {
       el.classList.remove('idle', 'running', 'paused', 'completed'); el.classList.add(state);
@@ -189,6 +196,7 @@ function updateClocks() {
       notify(timer).catch(() => toast('알림을 표시하지 못했어요. 기기 설정을 확인해주세요.', true));
     }
   }
+  syncAlarm(completed);
   $('#running-count').innerHTML = running ? `<span class="live-dot"></span>${running}개 진행 중` : '';
   document.title = running ? `${running}개 진행 중 · minimal timer` : 'minimal timer';
 }
@@ -330,7 +338,10 @@ async function login() {
 }
 
 $('#sound-toggle').onchange = async event => {
-  prefs.sound = event.target.checked; savePrefs(); sound();
+  prefs.sound = event.target.checked; savePrefs();
+  const completed = timers.some(timer => status(timer, clockNow()) === 'completed');
+  updateClocks();
+  if (prefs.sound && !completed) sound();
   if (prefs.notifications && prefs.push && user) await registerPush(prefs.sound).catch(() => { prefs.push = false; savePrefs(); });
 };
 $('#notification-toggle').onchange = async event => {
