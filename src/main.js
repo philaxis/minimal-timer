@@ -1,6 +1,7 @@
 import './style.css';
-import { createTimer, transition, duplicate, value, status, formatTime, validTimer } from './model.js';
-import { client, readTimers, saveTimer, watchTimers, registerPush, removePush } from './cloud.js';
+import { createTimer, transition, duplicate, value, status, formatTime, normalizeTimer, sessionRecord } from './model.js';
+import { dayKey, mergeSessions, normalizeTag, replaceTagPrefix, splitByDay, tagMatches, tagPrefixes, timelineLayout, unionDuration, validSession, validTimezone } from './history.js';
+import { client, readTimers, saveTimer, watchTimers, registerPush, removePush, readTags, saveTag, archiveTag, mergeTag, readSessions, saveSession, deleteSession, readTimezone, saveTimezone } from './cloud.js';
 
 const icons = {
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -22,6 +23,11 @@ const icons = {
   grip: '<path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3"/>',
   arrow: '<path d="M12 19V5m-6 6 6-6 6 6"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke-width="2.5"/>',
+  tag: '<path d="M20 13 13 20 4 11V4h7l9 9Z"/><path d="M8 8h.01" stroke-width="3"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.timer}</svg>`;
 const escape = text => String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -42,12 +48,13 @@ function write(key, data) {
 }
 function readBoard(key, fallback = []) {
   const data = read(key, fallback);
-  if (!Array.isArray(data) || data.some(timer => !validTimer(timer))) {
+  const normalized = Array.isArray(data) ? data.map(normalizeTimer) : [];
+  if (!Array.isArray(data) || normalized.some(timer => !timer)) {
     storageError = true;
     backupStorage(key);
     return [];
   }
-  return data;
+  return normalized;
 }
 const initial = () => [
   createTimer({ title: '딴짓', duration: 5 * 60_000, position: 0 }),
@@ -55,10 +62,23 @@ const initial = () => [
   createTimer({ title: '총 공부시간', mode: 'stopwatch', position: 2 }),
 ];
 let timers = readBoard(GUEST_KEY, initial());
+const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const sideKey = (kind, key = activeKey) => `${key}.${kind}`;
+function readTagList(key = GUEST_KEY) {
+  const data = read(sideKey('tags', key), []);
+  return Array.isArray(data) ? data.filter(tag => tag && normalizeTag(tag.path) === tag.path && typeof tag.archived === 'boolean') : [];
+}
+function readSessionList(key = GUEST_KEY) {
+  const data = read(sideKey('sessions', key), []);
+  return Array.isArray(data) ? data.filter(validSession) : [];
+}
+let tags = readTagList(), sessions = readSessionList(), sessionQueue = read(sideKey('sessionQueue', GUEST_KEY), []).filter(validSession), timezone = read(sideKey('timezone', GUEST_KEY), deviceTimezone);
+if (!validTimezone(timezone)) timezone = deviceTimezone;
 const savedPrefs = read('tempo.preferences', {});
 let prefs = { sound: false, notifications: false, ...savedPrefs, push: savedPrefs.push ?? savedPrefs.notifications ?? false };
 let user = null, channel = null, cloudReady = false, connected = false, syncing = false;
-let activeKey = GUEST_KEY, editingId = null, deferredInstall = null, audioContext, alarmTimer, drag = null;
+let activeKey = GUEST_KEY, editingId = null, editingTag = null, deferredInstall = null, audioContext, alarmTimer, drag = null;
+let view = 'timers', calendarMonth = dayKey(Date.now(), timezone).slice(0, 7), selectedDay = null;
 let noticeTimeout, authGeneration = 0;
 let queue = Promise.resolve();
 const pending = new Map();
@@ -74,24 +94,30 @@ $('#app').innerHTML = `
   <header class="topbar"><a class="brand" href="${BASE}" aria-label="minimal timer 홈">minimal timer</a>
     <div class="top-actions"><button class="icon-button cloud-status" id="cloud-button" aria-label="기기 간 연동 안 됨" title="기기 간 연동 안 됨">${icon('cloudOff')}</button><span class="top-divider"></span><button class="icon-button" id="preferences-button" aria-label="앱 설정">${icon('sliders')}</button><button class="login-button" id="login-button"><span class="google-g">G</span><span id="login-label">Google 로그인</span></button></div>
   </header>
-  <main><section class="workspace" aria-label="타이머"><div class="workspace-toolbar"><div class="workspace-title"><h1>타이머 <span id="total-count">0</span></h1><span class="running-count" id="running-count"></span></div></div>
+  <main><nav class="view-tabs" aria-label="보기"><button id="timers-view" class="active">${icon('list')} 타이머</button><button id="calendar-view">${icon('calendar')} 달력</button></nav><section class="workspace" id="timer-workspace" aria-label="타이머"><div class="workspace-toolbar"><div class="workspace-title"><h1>타이머 <span id="total-count">0</span></h1><span class="running-count" id="running-count"></span></div></div>
       <div class="timer-grid" id="timer-grid"></div>
-    </section>
+    </section><section class="calendar-workspace" id="calendar-workspace" aria-label="달력" hidden><div class="calendar-toolbar"><button class="icon-button" id="previous-month" aria-label="이전 달">${icon('left')}</button><h1 id="calendar-title"></h1><button class="icon-button" id="next-month" aria-label="다음 달">${icon('right')}</button><select id="calendar-tag-filter" aria-label="태그 필터"><option value="">모든 태그</option></select><select id="calendar-priority-filter" aria-label="중요도 필터"><option value="">모든 중요도</option><option value="high">높음</option><option value="normal">보통</option><option value="low">낮음</option></select></div><div class="month-grid" id="month-grid"></div></section>
   </main>
   <dialog id="timer-dialog"><form id="timer-form"><div class="dialog-heading"><h2 id="dialog-title">새 타이머</h2><button class="icon-button" type="button" data-close="timer-dialog" aria-label="닫기">${icon('close')}</button></div>
     <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="비워두면 자동 지정" autocomplete="off" />
     <fieldset class="mode-picker"><legend class="field-label">모드</legend><label><input type="radio" name="mode" value="timer" checked><span>${icon('timer')} 타이머</span></label><label><input type="radio" name="mode" value="stopwatch"><span>${icon('watch')} 스톱워치</span></label></fieldset>
     <div id="duration-fields"><span class="field-label">설정 시간</span><div class="duration-inputs"><label><input name="hours" type="number" min="0" max="168" value="0" inputmode="numeric" required><span>시간</span></label><b>:</b><label><input name="minutes" type="number" min="0" max="59" value="25" inputmode="numeric" required><span>분</span></label><b>:</b><label><input name="seconds" type="number" min="0" max="59" value="0" inputmode="numeric" required><span>초</span></label></div></div>
+    <div class="metadata-fields"><label><span class="field-label">종료일</span><input name="dueDate" type="date"></label><label><span class="field-label">중요도</span><select name="priority"><option value="low">낮음</option><option value="normal" selected>보통</option><option value="high">높음</option></select></label></div>
+    <fieldset class="tag-picker"><legend class="field-label">태그</legend><div id="timer-tag-options"></div></fieldset>
     <p class="field-note" id="mode-note">설정한 시간부터 거꾸로 셉니다.</p><p class="form-error" id="form-error" role="alert"></p>
     <div class="dialog-tools" id="edit-tools"><button type="button" class="text-button" id="duplicate-button">${icon('copy')} 복제</button><button type="button" class="text-button" id="move-first-button">${icon('arrow')} 맨 앞으로</button><button type="button" class="text-button danger" id="delete-button">${icon('trash')} 삭제</button></div>
     <button class="primary-button full-width" type="submit" id="save-button">만들기 ${icon('plus')}</button></form></dialog>
   <dialog id="preferences-dialog"><div class="dialog-heading"><h2>설정</h2><button class="icon-button" data-close="preferences-dialog" aria-label="닫기">${icon('close')}</button></div>
+    <section class="settings-section"><div class="settings-label"><strong>태그</strong><small>경로로 범주 만들기</small></div><form id="tag-add-form" class="inline-form"><input id="new-tag" maxlength="120" placeholder="#SNU/26-2학기"><button class="secondary-button" type="submit">추가</button></form><div class="tag-list" id="tag-list"></div></section>
+    <section class="settings-section"><label class="settings-label" for="timezone-input"><strong>시간대</strong><small>달력의 날짜 기준</small></label><div class="inline-form"><input id="timezone-input" list="timezone-options" maxlength="64"><button class="secondary-button" id="save-timezone" type="button">저장</button></div><datalist id="timezone-options"></datalist></section>
     <div class="preference-row"><div>${icon('bell')}<span><strong>완료 알림</strong><small>이 기기에서 알림 받기</small></span></div><label class="switch"><input id="notification-toggle" type="checkbox" aria-label="완료 알림"><span></span></label></div>
     <div class="preference-row"><div>${icon('sound')}<span><strong>알림 소리</strong><small>앱이 열려 있을 때 짧은 소리</small></span></div><label class="switch"><input id="sound-toggle" type="checkbox" aria-label="알림 소리"><span></span></label></div>
     <p class="field-note">앱을 닫았을 때 알림 소리는 기기의 알림 설정을 따릅니다.</p><button class="text-button" id="test-notification">${icon('bell')} 알림 테스트</button>
     <div class="settings-account"><span id="account-description">이 브라우저에 저장 중</span><button class="text-button" id="account-action">Google 로그인 ${icon('cloud')}</button></div>
     <button class="secondary-button full-width" id="install-button">${icon('download')} 앱 설치</button><p class="field-note" id="install-note"></p></dialog>
   <dialog id="delete-dialog"><div class="dialog-heading"><h2>타이머를 삭제할까요?</h2><button class="icon-button" data-close="delete-dialog" aria-label="닫기">${icon('close')}</button></div><p id="delete-description"></p><div class="confirm-actions"><button class="secondary-button" data-close="delete-dialog">취소</button><button class="primary-button danger-fill" id="confirm-delete">삭제하기</button></div></dialog>
+  <dialog id="tag-dialog"><form id="tag-rename-form"><div class="dialog-heading"><h2>태그 이름 변경</h2><button class="icon-button" type="button" data-close="tag-dialog" aria-label="닫기">${icon('close')}</button></div><p class="field-note" id="tag-source"></p><label class="field-label" for="tag-target">새 경로</label><input id="tag-target" maxlength="120" required><p class="field-note">기존 경로를 입력하면 두 태그가 합쳐집니다.</p><p class="form-error" id="tag-error" role="alert"></p><button class="primary-button full-width" type="submit">변경</button></form></dialog>
+  <dialog id="day-dialog" class="day-dialog"><div class="dialog-heading"><h2 id="day-title"></h2><button class="icon-button" data-close="day-dialog" aria-label="닫기">${icon('close')}</button></div><div id="day-summary"></div><div class="day-timeline" id="day-timeline"></div></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`;
 
 function toast(message, error = false) {
@@ -104,9 +130,96 @@ function toast(message, error = false) {
   noticeTimeout = setTimeout(() => { el.hidden = true; }, error ? 7000 : 3500);
 }
 function persist() { return write(activeKey, timers); }
+function persistWorkspace() {
+  persist(); write(sideKey('tags'), tags); write(sideKey('sessions'), sessions); write(sideKey('timezone'), timezone);
+}
 function savePrefs() { write('tempo.preferences', prefs); }
 function ordered() { return [...timers].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)); }
 function nextPosition() { return Math.max(-1, ...timers.map(t => t.position)) + 1; }
+function activeTags() { return tags.filter(tag => !tag.archived).sort((a, b) => a.path.localeCompare(b.path, 'ko')); }
+function filterTags() {
+  const paths = new Set(activeTags().map(tag => tag.path));
+  for (const session of sessions) for (const path of session.tags) {
+    const parts = path.slice(1).split('/');
+    for (let index = 1; index <= parts.length; index++) paths.add(`#${parts.slice(0, index).join('/')}`);
+  }
+  return [...paths].sort((a, b) => a.localeCompare(b, 'ko'));
+}
+function formatMinutes(ms) { return ms < 60_000 ? `${Math.floor(ms / 1000)}초` : `${Math.round(ms / 60_000)}분`; }
+function filtered(session) {
+  const tag = $('#calendar-tag-filter')?.value, priority = $('#calendar-priority-filter')?.value;
+  return (!tag || session.tags.some(path => tagMatches(path, tag))) && (!priority || session.priority === priority);
+}
+function sessionParts(day = null) {
+  return sessions.filter(filtered).flatMap(session => splitByDay(session, timezone)).filter(part => !day || part.day === day);
+}
+function upsertLocalSession(entry) {
+  if (!entry) return false;
+  const index = sessions.findIndex(session => session.id === entry.id);
+  if (index >= 0 && sessions[index].activeMs > entry.activeMs) return false;
+  if (index >= 0) sessions[index] = entry;
+  else sessions.push(entry);
+  write(sideKey('sessions'), sessions); renderCalendar();
+  return true;
+}
+function saveTimerSession(timer, now = clockNow()) {
+  const entry = sessionRecord(timer, now);
+  if (!entry || !upsertLocalSession(entry) || !user) return;
+  sessionQueue = sessionQueue.filter(item => item.id !== entry.id).concat(entry); write(sideKey('sessionQueue'), sessionQueue);
+  if (!cloudReady) return;
+  queue = queue.then(() => saveSession(entry)).then(() => {
+    sessionQueue = sessionQueue.filter(item => item.id !== entry.id); write(sideKey('sessionQueue'), sessionQueue);
+  }).catch(error => toast(error.message || '기록을 동기화하지 못했어요.', true));
+}
+function localClock(ms) {
+  const parts = new Intl.DateTimeFormat('ko-KR', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(ms);
+  return `${parts.find(part => part.type === 'hour').value}:${parts.find(part => part.type === 'minute').value}`;
+}
+function localMinute(ms) {
+  const [hour, minute] = localClock(ms).split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function renderCalendar() {
+  if (view !== 'calendar') return;
+  const [year, month] = calendarMonth.split('-').map(Number), days = new Date(Date.UTC(year, month, 0)).getUTCDate(), offset = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  $('#calendar-title').textContent = `${year}년 ${month}월`;
+  const tagValue = $('#calendar-tag-filter').value;
+  $('#calendar-tag-filter').innerHTML = '<option value="">모든 태그</option>' + filterTags().map(path => `<option value="${escape(path)}">${escape(path)}</option>`).join('');
+  $('#calendar-tag-filter').value = tagValue;
+  const parts = sessionParts(), byDay = new Map();
+  for (const part of parts) {
+    const list = byDay.get(part.day) || []; list.push(part); byDay.set(part.day, list);
+  }
+  const weekdays = ['일', '월', '화', '수', '목', '금', '토'].map(day => `<span class="weekday">${day}</span>`).join('');
+  let cells = '<span class="calendar-pad"></span>'.repeat(offset);
+  for (let date = 1; date <= days; date++) {
+    const key = `${calendarMonth}-${String(date).padStart(2, '0')}`, entries = byDay.get(key) || [];
+    const total = unionDuration(entries.flatMap(entry => entry.segments));
+    const names = new Map(); for (const entry of entries) names.set(entry.title, (names.get(entry.title) || 0) + entry.activeMs);
+    const due = timers.filter(timer => timer.dueDate === key && filtered({ tags: timer.tags, priority: timer.priority }));
+    const today = key === dayKey(Date.now(), timezone);
+    cells += `<button class="calendar-day${today ? ' today' : ''}" data-day="${key}" aria-label="${key}"><span class="date-number">${date}</span>${total ? `<strong>${formatMinutes(total)}</strong>` : ''}${[...names].slice(0, 2).map(([name, ms]) => `<small>${escape(name)} ${formatMinutes(ms)}</small>`).join('')}${due.slice(0, 2).map(timer => `<small class="due-item">${escape(timer.title)} 마감</small>`).join('')}</button>`;
+  }
+  $('#month-grid').innerHTML = weekdays + cells;
+}
+
+function renderDay(day) {
+  selectedDay = day;
+  const entries = timelineLayout(sessionParts(day));
+  const total = unionDuration(entries.flatMap(entry => entry.segments));
+  const due = timers.filter(timer => timer.dueDate === day && filtered({ tags: timer.tags, priority: timer.priority }));
+  $('#day-title').textContent = day;
+  $('#day-summary').innerHTML = `<div class="day-total"><strong>${formatMinutes(total)}</strong><span>총 실행</span></div>${due.length ? `<div class="due-list"><strong>종료 예정</strong>${due.map(timer => `<span>${escape(timer.title)}</span>`).join('')}</div>` : ''}`;
+  $('#day-timeline').innerHTML = `<div class="timeline-hours">${Array.from({ length: 25 }, (_, hour) => `<span style="top:${hour / 24 * 100}%">${String(hour).padStart(2, '0')}:00</span>`).join('')}</div><div class="timeline-events">${entries.map(entry => {
+    const top = localMinute(entry.startedAt) / 1440 * 100;
+    const boundaryEnd = dayKey(entry.endedAt - 1, timezone) === entry.day && dayKey(entry.endedAt, timezone) !== entry.day;
+    const end = boundaryEnd ? 1440 : entry.endedAt === entry.startedAt ? localMinute(entry.endedAt) : Math.max(localMinute(entry.endedAt), localMinute(entry.startedAt) + 1);
+    const height = Math.max(2.6, (end - localMinute(entry.startedAt)) / 1440 * 100), width = 100 / entry.columns;
+    return `<article class="timeline-event priority-${entry.priority}" style="top:${top}%;height:${height}%;left:${entry.column * width}%;width:${width}%" title="${escape(entry.title)} ${localClock(entry.startedAt)}–${localClock(entry.endedAt)}"><strong>${escape(entry.title)}</strong><span>${localClock(entry.startedAt)} · ${formatMinutes(entry.activeMs)}</span><button data-delete-session="${entry.id}" aria-label="${escape(entry.title)} 기록 삭제">×</button></article>`;
+  }).join('')}</div>`;
+  if (!$('#day-dialog').open) $('#day-dialog').showModal();
+}
 function sound() {
   if (!prefs.sound) return;
   try {
@@ -132,8 +245,9 @@ function syncAlarm(completed) {
 
 function card(timer) {
   const state = status(timer, clockNow());
+  const metadata = [timer.priority === 'high' ? '<span class="priority-mark">높음</span>' : '', ...(timer.tags || []).slice(0, 2).map(tag => `<span class="card-tag" title="${escape(tag)}">${escape(tag)}</span>`), timer.dueDate ? `<span class="card-due${timer.dueDate < dayKey(Date.now(), timezone) ? ' overdue' : ''}">${escape(timer.dueDate)} 마감</span>` : ''].filter(Boolean).join('');
   return `<article class="timer-card ${state}" data-id="${timer.id}" aria-label="${escape(timer.title)}"><div class="card-heading"><span class="card-kind">${icon(timer.mode === 'timer' ? 'timer' : 'watch')} ${timer.mode === 'timer' ? 'TIMER' : 'STOPWATCH'}</span><button class="drag-handle icon-button" data-action="drag" aria-label="${escape(timer.title)} 순서 이동. 방향키로 변경" title="끌어서 순서 변경">${icon('grip')}</button></div>
-    <h3>${escape(timer.title)}</h3><button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span><span class="clock-hint"><span class="state-icon">${icon(state === 'running' ? 'pause' : state === 'completed' ? 'check' : 'play')}</span><span class="state-label">${labels[state]}</span></span></button>
+    <h3>${escape(timer.title)}</h3><div class="card-metadata">${metadata}</div><button class="clock-button" data-action="toggle" aria-label="${escape(timer.title)} ${state === 'running' ? '일시정지' : '시작'}" ${state === 'completed' ? 'disabled' : ''}><span class="time-digits">${formatTime(value(timer, clockNow()), timer.mode)}</span><span class="clock-hint"><span class="state-icon">${icon(state === 'running' ? 'pause' : state === 'completed' ? 'check' : 'play')}</span><span class="state-label">${labels[state]}</span></span></button>
     <div class="progress-track" aria-hidden="true"><div class="progress-fill"></div></div><div class="card-bottom"><span class="duration-caption">${timer.mode === 'timer' ? `설정 ${formatTime(timer.duration)}` : '경과 시간'}</span><div class="card-controls"><button class="minute-button" data-action="extend" aria-label="${escape(timer.title)} 1분 추가" ${state !== 'running' || timer.mode !== 'timer' ? 'hidden' : ''}>+1분</button><button class="icon-button" data-action="reset" aria-label="${escape(timer.title)} 새로고침" title="초기화">${icon('reset')}</button><button class="icon-button" data-action="settings" aria-label="${escape(timer.title)} 설정" title="설정">${icon('sliders')}</button></div></div></article>`;
 }
 
@@ -145,6 +259,7 @@ function render() {
   $('#total-count').textContent = timers.length;
   if (focusId && focusAction) $(`[data-id="${focusId}"] [data-action="${focusAction}"]`)?.focus({ preventScroll: true });
   updateClocks(); updateConnection();
+  renderCalendar();
 }
 
 function updateConnection() {
@@ -192,6 +307,7 @@ function updateClocks() {
     el.querySelector('.progress-fill').style.transform = `scaleX(${timer.mode === 'timer' ? Math.max(0, Math.min(1, 1 - value(timer, now) / timer.runDuration)) : 0})`;
     const key = `${timer.id}:${timer.runId}`;
     if (state === 'completed' && !notified.has(key)) {
+      saveTimerSession(timer, now);
       notified.add(key); write('tempo.notified', [...notified].slice(-150));
       notify(timer).catch(() => toast('알림을 표시하지 못했어요. 기기 설정을 확인해주세요.', true));
     }
@@ -204,11 +320,17 @@ function updateClocks() {
 async function refreshCloud() {
   if (!user || !navigator.onLine || pending.size || syncing) return;
   const generation = authGeneration;
-  const remote = await readTimers();
+  const [remote, remoteTags, remoteSessions, remoteTimezone] = await Promise.all([readTimers(), readTags(), readSessions(), readTimezone()]);
+  for (const entry of sessionQueue) {
+    const saved = await saveSession(entry);
+    const index = remoteSessions.findIndex(item => item.id === saved.id);
+    if (index >= 0) remoteSessions[index] = saved; else remoteSessions.push(saved);
+  }
+  sessionQueue = []; write(sideKey('sessionQueue'), sessionQueue);
   if (generation !== authGeneration || pending.size) return;
-  timers = remote; cloudReady = true;
+  timers = remote; tags = remoteTags; sessions = remoteSessions.filter(validSession); timezone = remoteTimezone || timezone; cloudReady = true;
   for (const timer of remote) revisions.set(timer.id, timer.revision);
-  persist(); render();
+  persistWorkspace(); render();
 }
 
 function commit(next, previous = null, remove = false) {
@@ -218,6 +340,7 @@ function commit(next, previous = null, remove = false) {
   const before = timers;
   timers = remove ? timers.filter(t => t.id !== next.id) : previous ? timers.map(t => t.id === next.id ? next : t) : [...timers, next];
   if (!persist()) { timers = before; return false; }
+  if (remove || (previous && (previous.mode !== next.mode || previous.runId !== next.runId || previous.session?.id !== next.session?.id || (previous.state === 'running' && next.state === 'paused')))) saveTimerSession(previous);
   render();
   if (!user) return true;
   const generation = authGeneration;
@@ -255,6 +378,10 @@ function openEditor(id = null) {
   form.elements.hours.value = Math.floor(timer.duration / 3_600_000);
   form.elements.minutes.value = Math.floor(timer.duration / 60_000) % 60;
   form.elements.seconds.value = Math.floor(timer.duration / 1000) % 60;
+  form.elements.dueDate.value = timer.dueDate || '';
+  form.elements.priority.value = timer.priority || 'normal';
+  const options = activeTags().filter(tag => !timer.tags?.includes(tag.path)).map(tag => tag.path).concat(timer.tags || []);
+  $('#timer-tag-options').innerHTML = options.map(path => `<label class="tag-choice"><input type="checkbox" name="tags" value="${escape(path)}" ${timer.tags?.includes(path) ? 'checked' : ''}><span>${escape(path)}</span></label>`).join('') || '<span class="field-note">설정에서 태그를 추가하세요.</span>';
   $('#dialog-title').textContent = id ? '타이머 설정' : '새로운 시간';
   $('#save-button').innerHTML = id ? `저장하기 ${icon('check')}` : `만들기 ${icon('plus')}`;
   $('#edit-tools').hidden = !id;
@@ -280,7 +407,7 @@ $('#timer-form').addEventListener('submit', event => {
     let number = 1;
     while (timers.some(timer => timer.title === `${prefix}${number}`)) number++;
     const title = form.elements.title.value.trim() || original?.title || `${prefix}${number}`;
-    const fields = { title, mode, duration };
+    const fields = { title, mode, duration, tags: [...form.querySelectorAll('[name="tags"]:checked')].map(input => input.value), dueDate: form.elements.dueDate.value || null, priority: form.elements.priority.value };
     const next = original ? transition(original, 'edit', fields) : createTimer({ ...fields, position: nextPosition() });
     if (commit(next, original)) { $('#timer-dialog').close(); toast(original ? '저장됨' : '추가됨'); }
   } catch (error) { $('#form-error').textContent = error.message; }
@@ -302,7 +429,7 @@ $('#timer-grid').addEventListener('click', event => {
 });
 $('#duplicate-button').onclick = () => { const original = timers.find(t => t.id === editingId); if (original && commit(duplicate(original, nextPosition()))) { $('#timer-dialog').close(); toast('대기 상태로 복제했어요.'); } };
 $('#move-first-button').onclick = () => { const original = timers.find(t => t.id === editingId); if (original && commit(transition(original, 'position', { position: Math.min(...timers.map(t => t.position)) - 1 }), original)) $('#timer-dialog').close(); };
-$('#delete-button').onclick = () => { const timer = timers.find(t => t.id === editingId); if (!timer) return; $('#delete-description').textContent = `‘${timer.title}’ 블록과 진행 중인 시간이 삭제돼요.`; $('#delete-dialog').showModal(); };
+$('#delete-button').onclick = () => { const timer = timers.find(t => t.id === editingId); if (!timer) return; $('#delete-description').textContent = `‘${timer.title}’ 블록을 삭제합니다. 지난 기록은 남습니다.`; $('#delete-dialog').showModal(); };
 $('#confirm-delete').onclick = () => { const timer = timers.find(t => t.id === editingId); if (timer && commit(timer, timer, true)) { $('#delete-dialog').close(); $('#timer-dialog').close(); toast('타이머를 삭제했어요.'); } };
 document.querySelectorAll('[data-close]').forEach(button => { button.onclick = () => $(`#${button.dataset.close}`).close(); });
 document.querySelectorAll('dialog').forEach(dialog => { dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close(); } }); });
@@ -310,8 +437,85 @@ document.querySelectorAll('dialog').forEach(dialog => { dialog.addEventListener(
 function openPreferences() {
   $('#notification-toggle').checked = prefs.notifications;
   $('#sound-toggle').checked = prefs.sound;
+  $('#timezone-input').value = timezone;
+  $('#timezone-options').innerHTML = Intl.supportedValuesOf('timeZone').map(zone => `<option value="${escape(zone)}"></option>`).join('');
+  renderTagList();
   updateConnection(); $('#preferences-dialog').showModal();
 }
+function renderTagList() {
+  $('#tag-list').innerHTML = activeTags().map(tag => `<div class="tag-row"><span>${escape(tag.path)}</span><button data-tag-action="rename" data-path="${escape(tag.path)}" aria-label="${escape(tag.path)} 이름 변경">변경</button><button data-tag-action="archive" data-path="${escape(tag.path)}" aria-label="${escape(tag.path)} 보관">보관</button></div>`).join('');
+}
+function tagReady() { return !user || (navigator.onLine && cloudReady); }
+$('#tag-add-form').onsubmit = async event => {
+  event.preventDefault();
+  const path = normalizeTag($('#new-tag').value);
+  if (!path) return toast('태그 경로를 확인해주세요.', true);
+  if (!tagReady()) return toast('연결되면 다시 시도해주세요.', true);
+  try {
+    for (const prefix of tagPrefixes(path)) {
+      if (user) await saveTag(prefix);
+      const item = tags.find(tag => tag.path === prefix);
+      if (item) item.archived = false; else tags.push({ path: prefix, archived: false });
+    }
+    write(sideKey('tags'), tags); $('#new-tag').value = ''; renderTagList(); renderCalendar();
+  } catch (error) { toast(error.message, true); }
+};
+$('#tag-list').onclick = async event => {
+  const button = event.target.closest('[data-tag-action]'); if (!button) return;
+  const path = button.dataset.path;
+  if (button.dataset.tagAction === 'rename') { editingTag = path; $('#tag-source').textContent = path; $('#tag-target').value = path; $('#tag-error').textContent = ''; $('#tag-dialog').showModal(); return; }
+  if (!tagReady()) return toast('연결되면 다시 시도해주세요.', true);
+  try { if (user) await archiveTag(path); tags.find(tag => tag.path === path).archived = true; write(sideKey('tags'), tags); renderTagList(); renderCalendar(); }
+  catch (error) { toast(error.message, true); }
+};
+$('#tag-rename-form').onsubmit = async event => {
+  event.preventDefault();
+  const target = normalizeTag($('#tag-target').value), source = editingTag;
+  if (!target || target === source || target.startsWith(`${source}/`)) return $('#tag-error').textContent = '다른 태그 경로를 입력해주세요.';
+  if (!tagReady()) return $('#tag-error').textContent = '연결되면 다시 시도해주세요.';
+  try {
+    if (user) await mergeTag(source, target);
+    else {
+      const sourceTags = tags.filter(tag => tag.path === source || tag.path.startsWith(`${source}/`));
+      for (const tag of sourceTags) {
+        const mapped = `${target}${tag.path.slice(source.length)}`;
+        const item = tags.find(other => other.path === mapped);
+        if (item) item.archived = false; else tags.push({ path: mapped, archived: false });
+        tag.archived = true;
+      }
+      timers = timers.map(timer => ({ ...timer, tags: replaceTagPrefix(timer.tags || [], source, target) }));
+      persistWorkspace();
+    }
+    if (user) await refreshCloud();
+    render(); renderTagList(); $('#tag-dialog').close(); toast('태그 변경됨');
+  } catch (error) { $('#tag-error').textContent = error.message; }
+};
+$('#save-timezone').onclick = async () => {
+  const next = $('#timezone-input').value.trim();
+  if (!validTimezone(next)) return toast('올바른 시간대를 입력해주세요.', true);
+  if (!tagReady()) return toast('연결되면 다시 시도해주세요.', true);
+  try { if (user) await saveTimezone(next); timezone = next; write(sideKey('timezone'), next); renderCalendar(); toast('시간대 저장됨'); }
+  catch (error) { toast(error.message, true); }
+};
+$('#timers-view').onclick = () => { view = 'timers'; $('#timer-workspace').hidden = false; $('#calendar-workspace').hidden = true; $('#timers-view').classList.add('active'); $('#calendar-view').classList.remove('active'); };
+$('#calendar-view').onclick = () => { view = 'calendar'; $('#timer-workspace').hidden = true; $('#calendar-workspace').hidden = false; $('#calendar-view').classList.add('active'); $('#timers-view').classList.remove('active'); renderCalendar(); };
+function changeMonth(delta) { const [year, month] = calendarMonth.split('-').map(Number); calendarMonth = new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7); renderCalendar(); }
+$('#previous-month').onclick = () => changeMonth(-1);
+$('#next-month').onclick = () => changeMonth(1);
+$('#calendar-tag-filter').onchange = renderCalendar;
+$('#calendar-priority-filter').onchange = renderCalendar;
+$('#month-grid').onclick = event => { const day = event.target.closest('[data-day]')?.dataset.day; if (day) renderDay(day); };
+$('#day-timeline').onclick = async event => {
+  const id = event.target.closest('[data-delete-session]')?.dataset.deleteSession;
+  if (!id || !confirm('이 기록을 삭제할까요?')) return;
+  if (user && !tagReady()) return toast('연결되면 다시 시도해주세요.', true);
+  try {
+    if (user) await deleteSession(id);
+    sessions = sessions.filter(session => session.id !== id);
+    sessionQueue = sessionQueue.filter(session => session.id !== id); write(sideKey('sessionQueue'), sessionQueue);
+    write(sideKey('sessions'), sessions); renderCalendar(); renderDay(selectedDay);
+  } catch (error) { toast(error.message, true); }
+};
 $('#preferences-button').onclick = openPreferences;
 $('#cloud-button').onclick = openPreferences;
 $('#login-button').onclick = () => user && !user.is_anonymous ? openPreferences() : login();
@@ -333,6 +537,9 @@ async function login() {
   try {
     await queue;
     if (!write('tempo.import', timers.map(t => ({ ...t, id: crypto.randomUUID(), revision: 0, runId: crypto.randomUUID() })))) { popup.close(); return; }
+    write('tempo.import.tags', tags);
+    write('tempo.import.sessions', sessions);
+    write('tempo.import.timezone', timezone);
     if (user?.is_anonymous) await removePush();
     const { data, error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + BASE, skipBrowserRedirect: true } });
     if (error) throw error;
@@ -455,6 +662,11 @@ async function applySession(session) {
   cloudReady = false; connected = false;
   activeKey = !user || user.is_anonymous ? GUEST_KEY : `tempo.account.${user.id}`;
   timers = readBoard(activeKey);
+  tags = readTagList(activeKey);
+  sessions = readSessionList(activeKey);
+  sessionQueue = read(sideKey('sessionQueue'), []).filter(validSession);
+  timezone = read(sideKey('timezone'), deviceTimezone);
+  if (!validTimezone(timezone)) timezone = deviceTimezone;
   render();
   if (!user) return;
   syncing = true;
@@ -466,20 +678,29 @@ async function applySession(session) {
     clockOffset = Math.round(clockOffset);
     write('tempo.clockOffset', clockOffset);
   }
-  const remote = await readTimers();
+  const [remote, remoteTags, remoteSessions, remoteTimezone] = await Promise.all([readTimers(), readTags(), readSessions(), readTimezone()]);
   const localImport = user.is_anonymous ? timers : readBoard('tempo.import');
+  const importTags = user.is_anonymous ? tags : readTagList('tempo.import');
+  const importSessions = user.is_anonymous ? sessions : readSessionList('tempo.import');
   const combined = [...remote];
   for (const timer of localImport) {
     if (combined.some(t => t.id === timer.id)) continue;
     const saved = await saveTimer({ ...timer, anchor: timer.anchor === null ? null : timer.anchor + clockOffset - oldOffset, position: Math.max(-1, ...combined.map(t => t.position)) + 1 });
     combined.push(saved);
   }
+  for (const tag of importTags) if (!remoteTags.some(item => item.path === tag.path)) { await saveTag(tag.path); remoteTags.push({ path: tag.path, archived: false }); }
+  for (const entry of importSessions) {
+    const remoteEntry = remoteSessions.find(item => item.id === entry.id);
+    if (!remoteEntry || remoteEntry.activeMs <= entry.activeMs) await saveSession(entry);
+  }
+  if (!remoteTimezone) await saveTimezone(user.is_anonymous ? timezone : read('tempo.import.timezone', timezone));
   if (generation !== authGeneration) return;
   timers = combined;
+  tags = remoteTags; sessions = mergeSessions(remoteSessions, importSessions); timezone = remoteTimezone || (user.is_anonymous ? timezone : read('tempo.import.timezone', timezone));
   revisions.clear();
   for (const timer of timers) revisions.set(timer.id, timer.revision);
-  persist();
-  if (!user.is_anonymous) { localStorage.removeItem('tempo.import'); write(GUEST_KEY, []); }
+  persistWorkspace();
+  if (!user.is_anonymous) { for (const key of ['tempo.import', 'tempo.import.tags', 'tempo.import.sessions', 'tempo.import.timezone']) localStorage.removeItem(key); write(GUEST_KEY, []); write(sideKey('tags', GUEST_KEY), []); write(sideKey('sessions', GUEST_KEY), []); }
   cloudReady = true; syncing = false;
   const { data: auth } = await client.auth.getSession();
   if (auth.session) await client.realtime.setAuth(auth.session.access_token);
@@ -491,12 +712,20 @@ async function applySession(session) {
   render();
 }
 
-window.addEventListener('storage', event => { if (event.key === activeKey && !pending.size && !syncing) { timers = readBoard(activeKey); render(); } });
+window.addEventListener('storage', event => {
+  if (pending.size || syncing) return;
+  if (event.key === activeKey) timers = readBoard(activeKey);
+  else if (event.key === sideKey('tags')) tags = readTagList(activeKey);
+  else if (event.key === sideKey('sessions')) sessions = readSessionList(activeKey);
+  else if (event.key === sideKey('timezone')) timezone = read(sideKey('timezone'), deviceTimezone);
+  else return;
+  render();
+});
 window.addEventListener('online', () => { if (user) { cloudReady = false; setSession({ user }); } updateConnection(); });
 window.addEventListener('offline', () => { connected = false; updateConnection(); });
 document.addEventListener('visibilitychange', () => { updateClocks(); if (!document.hidden && user) refreshCloud().catch(() => { connected = false; updateConnection(); }); });
 
-render(); persist();
+render(); persistWorkspace();
 if (storageError) toast('저장 데이터를 읽지 못했어요. 브라우저 저장 설정을 확인해주세요.', true);
 setInterval(updateClocks, 100);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`${BASE}sw.js`).catch(() => toast('앱 설치 기능을 준비하지 못했어요.', true));

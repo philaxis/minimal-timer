@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTimer, transition, value, status, duplicate, formatTime, validTimer, MAX_DURATION } from '../src/model.js';
+import { createTimer, transition, value, status, duplicate, formatTime, validTimer, normalizeTimer, MAX_DURATION } from '../src/model.js';
 
 test('independent clocks survive a suspended tab, pause/resume and reset to the latest saved duration', () => {
   const idle = createTimer({ duration: 10_000 });
@@ -51,4 +51,16 @@ test('validate persisted data and input limits, formatting never completes early
   assert.equal(formatTime(999, 'stopwatch'), '00:00');
   assert.equal(formatTime(0), '00:00');
   assert.equal(value(transition(timer, 'toggle', {}, 5000), 4000), timer.duration);
+});
+
+test('legacy timers gain safe metadata defaults and new metadata is validated', () => {
+  const legacy = createTimer();
+  delete legacy.tags; delete legacy.dueDate; delete legacy.priority; delete legacy.session;
+  assert.deepEqual(normalizeTimer(legacy).tags, []);
+  assert.equal(normalizeTimer(legacy).priority, 'normal');
+  assert.equal(normalizeTimer(legacy).dueDate, null);
+  assert.throws(() => createTimer({ tags: ['#bad//tag'] }));
+  assert.throws(() => createTimer({ dueDate: '2026-02-30' }));
+  assert.throws(() => createTimer({ priority: 'urgent' }));
+  assert.equal(validTimer(createTimer({ tags: ['#SNU/수학'], dueDate: '2026-09-30', priority: 'high' })), true);
 });

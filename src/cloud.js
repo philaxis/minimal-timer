@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { validTimer } from './model.js';
+import { normalizeTimer } from './model.js';
 
 export const projectUrl = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -7,8 +7,8 @@ export const client = projectUrl && key ? createClient(projectUrl, key, { auth: 
 export const pushKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
 export function decode(row) {
-  const timer = { ...row.data, revision: row.revision };
-  if (!validTimer(timer)) throw new Error('저장된 타이머를 읽을 수 없어요.');
+  const timer = normalizeTimer({ ...row.data, revision: row.revision });
+  if (!timer) throw new Error('저장된 타이머를 읽을 수 없어요.');
   return timer;
 }
 
@@ -28,7 +28,61 @@ export async function saveTimer(timer, revision = -1, remove = false) {
 export function watchTimers(userId, onChange, onConnection) {
   return client.channel(`tempo:${userId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tempo_timers', filter: `user_id=eq.${userId}` }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tempo_tags', filter: `user_id=eq.${userId}` }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tempo_sessions', filter: `user_id=eq.${userId}` }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tempo_profiles', filter: `user_id=eq.${userId}` }, onChange)
     .subscribe(state => onConnection(state === 'SUBSCRIBED'));
+}
+
+export async function readTags() {
+  const { data, error } = await client.from('tempo_tags').select('path,archived').order('path');
+  if (error) throw error;
+  return data;
+}
+
+export async function saveTag(path) {
+  const { error } = await client.from('tempo_tags').upsert({ path, archived: false }, { onConflict: 'user_id,path' });
+  if (error) throw error;
+}
+
+export async function archiveTag(path) {
+  const { error } = await client.from('tempo_tags').update({ archived: true, updated_at: new Date().toISOString() }).eq('path', path);
+  if (error) throw error;
+}
+
+export async function mergeTag(source, target) {
+  const { error } = await client.rpc('tempo_merge_tag', { source, target });
+  if (error) throw error;
+}
+
+export async function readSessions() {
+  const { data, error } = await client.from('tempo_sessions').select('data');
+  if (error) throw error;
+  return data.map(row => row.data);
+}
+
+export async function saveSession(entry) {
+  const { data, error } = await client.rpc('tempo_save_session', { entry });
+  if (error) throw error;
+  return data?.[0]?.data || entry;
+}
+
+export async function deleteSession(id) {
+  const { error } = await client.from('tempo_sessions').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export async function readTimezone() {
+  const { data, error } = await client.from('tempo_profiles').select('timezone').maybeSingle();
+  if (error) throw error;
+  return data?.timezone || null;
+}
+
+export async function saveTimezone(timezone) {
+  const { data: { user }, error: userError } = await client.auth.getUser();
+  if (userError || !user) throw userError || new Error('로그인이 필요해요.');
+  const { error } = await client.from('tempo_profiles').upsert({ user_id: user.id, timezone, updated_at: new Date().toISOString() });
+  if (error) throw error;
 }
 
 export async function registerPush(sound = false) {
