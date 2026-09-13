@@ -50,9 +50,9 @@ function readBoard(key, fallback = []) {
   return data;
 }
 const initial = () => [
-  createTimer({ title: '25분 타이머', duration: 25 * 60_000, position: 0 }),
-  createTimer({ title: '5분 타이머', duration: 5 * 60_000, position: 1 }),
-  createTimer({ title: '스톱워치', mode: 'stopwatch', position: 2 }),
+  createTimer({ title: '딴짓', duration: 5 * 60_000, position: 0 }),
+  createTimer({ title: '수학', duration: 25 * 60_000, position: 1 }),
+  createTimer({ title: '총 공부시간', mode: 'stopwatch', position: 2 }),
 ];
 let timers = readBoard(GUEST_KEY, initial());
 const savedPrefs = read('tempo.preferences', {});
@@ -79,7 +79,7 @@ $('#app').innerHTML = `
     </section>
   </main>
   <dialog id="timer-dialog"><form id="timer-form"><div class="dialog-heading"><h2 id="dialog-title">새 타이머</h2><button class="icon-button" type="button" data-close="timer-dialog" aria-label="닫기">${icon('close')}</button></div>
-    <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="타이머 이름" required autocomplete="off" />
+    <label class="field-label" for="timer-name">이름</label><input id="timer-name" name="title" maxlength="60" placeholder="비워두면 자동 지정" autocomplete="off" />
     <fieldset class="mode-picker"><legend class="field-label">모드</legend><label><input type="radio" name="mode" value="timer" checked><span>${icon('timer')} 타이머</span></label><label><input type="radio" name="mode" value="stopwatch"><span>${icon('watch')} 스톱워치</span></label></fieldset>
     <div id="duration-fields"><span class="field-label">설정 시간</span><div class="duration-inputs"><label><input name="hours" type="number" min="0" max="168" value="0" inputmode="numeric" required><span>시간</span></label><b>:</b><label><input name="minutes" type="number" min="0" max="59" value="25" inputmode="numeric" required><span>분</span></label><b>:</b><label><input name="seconds" type="number" min="0" max="59" value="0" inputmode="numeric" required><span>초</span></label></div></div>
     <p class="field-note" id="mode-note">설정한 시간부터 거꾸로 셉니다.</p><p class="form-error" id="form-error" role="alert"></p>
@@ -276,7 +276,11 @@ $('#timer-form').addEventListener('submit', event => {
     const form = event.currentTarget, original = timers.find(t => t.id === editingId);
     const mode = form.elements.mode.value;
     const duration = mode === 'stopwatch' ? (original?.duration || 25 * 60_000) : (Number(form.elements.hours.value) * 3600 + Number(form.elements.minutes.value) * 60 + Number(form.elements.seconds.value)) * 1000;
-    const fields = { title: form.elements.title.value, mode, duration };
+    const prefix = mode === 'stopwatch' ? '스톱워치' : '타이머';
+    let number = 1;
+    while (timers.some(timer => timer.title === `${prefix}${number}`)) number++;
+    const title = form.elements.title.value.trim() || original?.title || `${prefix}${number}`;
+    const fields = { title, mode, duration };
     const next = original ? transition(original, 'edit', fields) : createTimer({ ...fields, position: nextPosition() });
     if (commit(next, original)) { $('#timer-dialog').close(); toast(original ? '저장됨' : '추가됨'); }
   } catch (error) { $('#form-error').textContent = error.message; }
